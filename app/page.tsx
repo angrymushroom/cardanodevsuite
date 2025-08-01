@@ -8,11 +8,6 @@ import UTXOSelector from '../components/UTXOSelector';
 
 // Main Page Component
 export default function Home() {
-  const suiteRef = useRef<HTMLDivElement>(null);
-
-  const handleScrollToSuite = () => {
-    suiteRef.current?.scrollIntoView({ behavior: 'smooth' });
-  };
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100">
@@ -23,9 +18,6 @@ export default function Home() {
             <Sparkles className="text-violet-400" />
             <h1 className="text-xl font-bold">Cardano Dev Suite</h1>
           </div>
-          <button onClick={handleScrollToSuite} className="bg-violet-600 hover:bg-violet-700 text-white font-bold py-2 px-4 rounded-lg transition-colors">
-            Launch Suite
-          </button>
         </div>
       </header>
 
@@ -43,12 +35,8 @@ export default function Home() {
       </main>
 
       {/* The Suite Section */}
-      <div ref={suiteRef} className="bg-black py-20 mt-16">
+      <div className="bg-black py-20 mt-16">
         <div className="container mx-auto px-6">
-          <div className="text-center mb-12">
-            <h3 className="text-4xl font-bold">The Developer Suite</h3>
-            <p className="text-slate-400">Connect your Preprod testnet wallet to try it out.</p>
-          </div>
           <DeveloperSuite />
         </div>
       </div>
@@ -88,14 +76,12 @@ const DeveloperSuite = () => {
     JSON.stringify(defaultMetadata, null, 2)
   );
     
-
   // Transaction State
   const [unsignedTx, setUnsignedTx] = useState<string | null>(null);
   const [summary, setSummary] = useState<any>(null);
 
-// This is the new, reusable function (the "After")
 
-// We wrap the function in useCallback for performance optimization
+  // We wrap the function in useCallback for performance optimization
   const updateWalletState = useCallback(async () => {
       if (connected && wallet) {
         setLoading(true);
@@ -140,7 +126,21 @@ const DeveloperSuite = () => {
       if (selectedUtxos.length > 0) {
         tx.setTxInputs(selectedUtxos);
       }
-      
+
+      // --- Attach metadata to transaction ---
+      if (metadata.trim() !== '{}' && metadata.trim() !== '') {
+        try {
+          const metadataJson = JSON.parse(metadata);
+          // Get the first key from the JSON object (e.g., "674")
+          const label = Object.keys(metadataJson)[0]; 
+          // Use the dynamic label instead of '0'
+          tx.setMetadata(parseInt(label), metadataJson[label]);
+        } catch (e) {
+          throw new Error('Metadata is not valid JSON.');
+        }
+      }
+      // --------------------
+    
       const builtTxCbor = await tx.build();
       
       if (!builtTxCbor) {
