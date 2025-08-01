@@ -1,0 +1,30 @@
+/* Tailwind CSS directives */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* CSS Variables for colors, adapted for dark mode */
+:root {
+  --foreground-rgb: 255, 255, 255; /* White text for dark mode */
+  --background-start-rgb: 17, 24, 39; /* Dark slate for gradient start */
+  --background-end-rgb: 3, 7, 18; /* Even darker slate for gradient end */
+}
+
+/* Body styles */
+body {
+  color: rgb(var(--foreground-rgb)); /* Apply foreground color */
+  background: linear-gradient(
+      to bottom,
+      transparent,
+      rgb(var(--background-end-rgb))
+    )
+    rgb(var(--background-start-rgb)); /* Apply background gradient */
+  font-family: 'Inter', sans-serif; /* Set default font family */
+}
+
+/* Utility layer for custom utilities */
+@layer utilities {
+  .text-balance {
+    text-wrap: balance; /* Balances text wrapping for better readability */
+  }
+}
