@@ -19,10 +19,6 @@ A web-based developer tool for the Cardano blockchain designed to simplify trans
 -   **UI:** React & Tailwind CSS
 -   **Blockchain Interaction:** MeshJS
 
-## Getting Started
-
-To get a local copy up and running, follow these simple steps.
-
 ### Prerequisites
 
 -   Node.js (v18 or later)
