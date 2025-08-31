@@ -14,6 +14,14 @@ export default function DeployContractView({ connected, updateWalletState }) {
   const [scriptAddress, setScriptAddress] = useState('');
   const [amount, setAmount] = useState('');
   const [ownerPkh, setOwnerPkh] = useState('');
+  const [datum, setDatum] = useState(`{
+    "constructor": 0,
+    "fields": [
+      {
+        "bytes": ""
+      }
+    ]
+  }`);
 
   async function handleDeploy() {
     if (!wallet) return;
@@ -22,47 +30,43 @@ export default function DeployContractView({ connected, updateWalletState }) {
     setTxHash(null);
 
     try {
-
-    // --- START VALIDATION ---
-    if (!scriptAddress || !amount || !ownerPkh) {
-      throw new Error("Script Address, Amount, and Owner PKH are all required.");
-    }
-
-    const parsedAmount = parseFloat(amount);
-    if (isNaN(parsedAmount) || parsedAmount <= 0) {
-        throw new Error("Amount must be a positive number.");
-    }
-    // --- END VALIDATION ---
-
       const lovelaceAmount = (parseFloat(amount) * 1000000).toString();
       const assets = [{ unit: "lovelace", quantity: lovelaceAmount }];
       const usedAddresses = await wallet.getUsedAddresses();
       const walletAddress = usedAddresses[0];
       const utxos = await wallet.getUtxos();
-
-
-    // --- START DEBUG LOGS ---
-    console.log("Building transaction with:");
-    console.log("  - Script Address:", scriptAddress);
-    console.log("  - Lovelace Amount:", lovelaceAmount);
-    console.log("  - Owner PKH:", ownerPkh);
-    console.log("  - Change Address:", walletAddress);
-    console.log("  - Available UTxOs for selection:", utxos);
-    // --- END DEBUG LOGS ---
-
       const provider = new BlockfrostProvider('preprodUfxEoynE8cv2NDY0NegobQrU78piDVnN');
 
       const meshTxBuilder = new MeshTxBuilder({
         fetcher: provider,
         submitter: provider,
       });
-      
+
+      // Parse the user-defined datum
+      let datumObject;
+      try {
+        datumObject = JSON.parse(datum);
+      } catch (e) {
+        throw new Error("Datum is not valid JSON.");
+      }
+
+
+      // --- START VALIDATION ---
+      if (!scriptAddress || !amount || !datumObject) {
+        throw new Error("Script Address, Amount, and datum json are all required.");
+      }
+
+      const parsedAmount = parseFloat(amount);
+      if (isNaN(parsedAmount) || parsedAmount <= 0) {
+          throw new Error("Amount must be a positive number.");
+      }
+
+      console.log("--datum object: ",datumObject)
+      // --- END VALIDATION ---
+
       const unsignedTx = await meshTxBuilder
         .txOut(scriptAddress, assets)
-        .txOutInlineDatumValue({
-          constructor: 0,
-          fields: [{ bytes: ownerPkh }],
-        },"JSON")
+        .txOutInlineDatumValue(datumObject,"JSON")
         .changeAddress(walletAddress)
         .selectUtxosFrom(utxos)
         .complete();
@@ -86,7 +90,7 @@ export default function DeployContractView({ connected, updateWalletState }) {
       <div className="space-y-4 max-w-lg mx-auto">
         <FormInput label="Script Address" placeholder="addr_test1w..." value={scriptAddress} onChange={setScriptAddress} />
         <FormInput label="Amount to Lock (ADA)" placeholder="0.0" value={amount} onChange={setAmount} />
-        <FormInput label="Owner Public Key Hash (for Datum)" placeholder="The PKH of the wallet that can redeem" value={ownerPkh} onChange={setOwnerPkh} />
+        <FormTextarea label="Datum (JSON)" value={datum} onChange={setDatum} />
         <button onClick={handleDeploy} disabled={isLoading || !connected} className="w-full bg-violet-600 hover:bg-violet-700 text-white font-bold py-3 px-4 rounded-lg transition-colors disabled:bg-slate-800 disabled:text-slate-500">
           {isLoading ? 'Deploying...' : 'Deploy & Lock Funds'}
         </button>
