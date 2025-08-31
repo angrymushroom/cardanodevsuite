@@ -8,6 +8,7 @@ import { Sparkles, ArrowRight, Power, ChevronsRight, FileJson, Send, Search } fr
 import UTXOSelector from '../components/UTXOSelector';
 import UTxODetailModal from '../components/UTxODetailModal';
 import SimulationResult from '../components/SimulationResult';
+import DeployContractView from '../components/DeployContractView'; // <-- ADD THIS IMPORT
 
 
 // Main Page Component (Landing Page)
@@ -54,11 +55,15 @@ const DeveloperSuite = () => {
   const { connected, wallet, connect, disconnect } = useWallet();
   const network = useNetwork();
   
+  // State that is shared across all views
   const [address, setAddress] = useState<string | undefined>();
   const [adaBalance, setAdaBalance] = useState<string>('0');
   const [utxos, setUtxos] = useState<UTxO[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // LIFTED STATE: Selected UTxOs is now managed here
+  const [selectedUtxos, setSelectedUtxos] = useState<UTxO[]>([]);
 
   const updateWalletState = useCallback(async () => {
     if (connected && wallet) {
@@ -73,7 +78,7 @@ const DeveloperSuite = () => {
         } catch (e) { console.error(e); setError("Failed to fetch wallet data."); }
         finally { setLoading(false); }
     } else {
-        setAddress(undefined); setAdaBalance('0'); setUtxos([]);
+        setAddress(undefined); setAdaBalance('0'); setUtxos([]); setSelectedUtxos([]);
     }
   }, [connected, wallet]);
 
@@ -87,10 +92,13 @@ const DeveloperSuite = () => {
         activeView={activeView} 
         onNavigate={setActiveView}
         walletState={{ connected, connect, disconnect, address, adaBalance, network }}
+        utxos={utxos}
+        selectedUtxos={selectedUtxos}
+        onSelectionChange={setSelectedUtxos}
       />
       <MainContent 
         activeView={activeView}
-        walletProps={{ connected, wallet, address, utxos, updateWalletState }}
+        walletProps={{ connected, wallet, address, updateWalletState, selectedUtxos }}
       />
     </div>
   );
@@ -100,11 +108,11 @@ const DeveloperSuite = () => {
 // ==================================================================
 // Sidebar and Navigation Components
 // ==================================================================
-const Sidebar = ({ activeView, onNavigate, walletState }) => {
+const Sidebar = ({ activeView, onNavigate, walletState, utxos, selectedUtxos, onSelectionChange }) => {
   const { connected, connect, disconnect, address, adaBalance, network } = walletState;
   
   return (
-    <aside className="w-full md:w-1/3 lg:w-1/4">
+    <aside className="w-full md:w-1/3 lg:w-1/4 space-y-6">
       <div className="bg-slate-900 border border-slate-700 rounded-2xl p-6 sticky top-24">
         <div className="flex justify-between items-center mb-4">
           <h2 className="text-xl font-bold">Wallet</h2>
@@ -131,9 +139,13 @@ const Sidebar = ({ activeView, onNavigate, walletState }) => {
         <nav className="space-y-2">
           <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Tools</h3>
           <NavItem icon={<Send size={18} />} label="Simple Transfer" isActive={activeView === 'simple_transfer'} onClick={() => onNavigate('simple_transfer')} />
-          {/* Corrected this to 'fetch_utxos' */}
-          <NavItem icon={<FileJson size={18} />} label="Contract Interaction" isActive={activeView === 'contract_interaction'} onClick={() => onNavigate('contract_interaction')} />
+          <NavItem icon={<Search size={18} />} label="Deploy Contract" isActive={activeView === 'deploy_contract'} onClick={() => onNavigate('deploy_contract')} />
+          <NavItem icon={<FileJson size={18} />} label="Contract Simulator" isActive={activeView === 'contract_simulator'} onClick={() => onNavigate('contract_simulator')} />
         </nav>
+      </div>
+      {/* UTXO SELECTOR IS NOW HERE */}
+      <div className="bg-slate-900 border border-slate-700 rounded-2xl p-6 sticky top-96">
+          <UTXOSelector utxos={utxos} selectedUtxos={selectedUtxos} onSelectionChange={onSelectionChange} disabled={!connected} />
       </div>
     </aside>
   );
@@ -143,8 +155,8 @@ const MainContent = ({ activeView, walletProps }) => {
   return (
     <main className="flex-1">
       {activeView === 'simple_transfer' && <SimpleTransferView {...walletProps} />}
-      {/* Changed FetchUtxosView to the correct name: ContractInteractionView */}
-      {activeView === 'contract_interaction' && <ContractInteractionView {...walletProps} />}
+      {activeView === 'deploy_contract' && <DeployContractView {...walletProps} />}
+      {activeView === 'contract_simulator' && <ContractInteractionView {...walletProps} />}
     </main>
   );
 };
@@ -222,9 +234,6 @@ const SimpleTransferView = ({ connected, wallet, address, utxos, updateWalletSta
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <div className="space-y-6">
-            <div className="bg-slate-900 border border-slate-700 rounded-2xl p-6">
-                <UTXOSelector utxos={utxos} selectedUtxos={selectedUtxos} onSelectionChange={setSelectedUtxos} disabled={!connected} />
-            </div>
              <div className="bg-slate-900 border border-slate-700 rounded-2xl p-6">
                 <h2 className="text-xl font-bold mb-4">Builder</h2>
                 <div className="space-y-4">
@@ -260,6 +269,7 @@ const SimpleTransferView = ({ connected, wallet, address, utxos, updateWalletSta
     </div>
   );
 };
+
 // ==================================================================
 // Feature View: Contract Interaction
 // ==================================================================
@@ -334,7 +344,7 @@ const ContractInteractionView = ({ connected, wallet, address }) => {
 
       const unsignedTxCbor = await tx.build();
       
-      const apiKey = 'YOUR_PREPROD_KEY'; // IMPORTANT: Replace with your key
+      const apiKey = 'preprodUfxEoynE8cv2NDY0NegobQrU78piDVnN'; // IMPORTANT: Replace with your key
       const response = await fetch(
         'https://cardano-preprod.blockfrost.io/api/v0/utils/txs/evaluate',
         {
@@ -439,15 +449,15 @@ const CustomWalletConnector = ({ onConnect, connected, onDisconnect }) => {
         {connected ? ( <button onClick={onDisconnect} className="text-sm text-slate-400 hover:text-white flex items-center gap-1"><Power size={16} /> Disconnect</button> ) : ( <button onClick={() => setIsModalOpen(true)} className="bg-violet-600 hover:bg-violet-700 text-white font-bold py-2 px-4 rounded-lg text-sm">Connect</button> )}
         {isModalOpen && (
             <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50" onClick={() => setIsModalOpen(false)}>
-            <div className="bg-slate-800 rounded-lg p-6 space-y-2 w-72" onClick={(e) => e.stopPropagation()}>
-                <h3 className="font-bold text-lg mb-4">Select a Wallet</h3>
-                {wallets.map(wallet => (
-                <button key={wallet.name} onClick={() => handleConnect(wallet.name)} className="w-full flex items-center gap-4 p-3 hover:bg-slate-700 rounded-md text-left">
-                    <img src={wallet.icon} alt={wallet.name} width={32} height={32} />
-                    {wallet.name}
-                </button>
-                ))}
-            </div>
+              <div className="bg-slate-800 rounded-lg p-6 space-y-2 w-72" onClick={(e) => e.stopPropagation()}>
+                  <h3 className="font-bold text-lg mb-4">Select a Wallet</h3>
+                  {wallets.map(wallet => (
+                  <button key={wallet.name} onClick={() => handleConnect(wallet.name)} className="w-full flex items-center gap-4 p-3 hover:bg-slate-700 rounded-md text-left">
+                      <img src={wallet.icon} alt={wallet.name} width={32} height={32} />
+                      {wallet.name}
+                  </button>
+                  ))}
+              </div>
             </div>
         )}
         </>

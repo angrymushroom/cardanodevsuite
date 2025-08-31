@@ -27,7 +27,7 @@ const UTXOSelector = ({ utxos, selectedUtxos, onSelectionChange, disabled }: UTX
   };
 
   return (
-    <div className={`bg-slate-900 border border-slate-700 rounded-2xl p-6 ${disabled ? 'opacity-50' : ''}`}>
+    <div className={`bg-slate-900 border border-slate-700 rounded-2xl p-6 z-0 ${disabled ? 'opacity-50' : ''}`}>
       <h2 className="text-xl font-bold">Available UTxOs</h2>
       <p className="text-sm text-slate-400 mt-1">Select to use as inputs (optional).</p>
       
