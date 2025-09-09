@@ -4,12 +4,11 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { useWallet, useWalletList, useNetwork } from '@meshsdk/react';
 import { Transaction, UTxO } from '@meshsdk/core';
 import { PlutusData, PlutusDatumSchema } from '@emurgo/cardano-serialization-lib-asmjs';
-import { Sparkles, ArrowRight, Power, ChevronsRight, FileJson, Send, Search } from 'lucide-react';
+import { Sparkles, ArrowRight, Power, ChevronsRight, FileJson, Send, Search, Clipboard } from 'lucide-react';
 import UTXOSelector from '../components/UTXOSelector';
 import UTxODetailModal from '../components/UTxODetailModal';
 import SimulationResult from '../components/SimulationResult';
 import DeployContractView from '../components/DeployContractView'; // <-- ADD THIS IMPORT
-
 
 // Main Page Component (Landing Page)
 export default function Home() {
@@ -61,6 +60,7 @@ const DeveloperSuite = () => {
   const [utxos, setUtxos] = useState<UTxO[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [pkh, setPkh] = useState<string | null>(null); // <-- Add PKH state here
 
   // LIFTED STATE: Selected UTxOs is now managed here
   const [selectedUtxos, setSelectedUtxos] = useState<UTxO[]>([]);
@@ -72,9 +72,15 @@ const DeveloperSuite = () => {
             const currentUtxos = await wallet.getUtxos();
             const currentBalance = await wallet.getBalance();
             const usedAddresses = await wallet.getUsedAddresses();
+            const dRep = await wallet.getDRep(); 
+            const pkh = dRep.publicKeyHash;
+
             setUtxos(currentUtxos || []);
             setAddress(usedAddresses[0]);
             setAdaBalance(currentBalance.find(a => a.unit === 'lovelace')?.quantity || '0');
+            setPkh(pkh); // <-- Set PKH state here
+
+
         } catch (e) { console.error(e); setError("Failed to fetch wallet data."); }
         finally { setLoading(false); }
     } else {
@@ -91,7 +97,7 @@ const DeveloperSuite = () => {
       <Sidebar 
         activeView={activeView} 
         onNavigate={setActiveView}
-        walletState={{ connected, connect, disconnect, address, adaBalance, network }}
+        walletState={{ connected, connect, disconnect, address, adaBalance, network, pkh }}
         utxos={utxos}
         selectedUtxos={selectedUtxos}
         onSelectionChange={setSelectedUtxos}
@@ -109,7 +115,7 @@ const DeveloperSuite = () => {
 // Sidebar and Navigation Components
 // ==================================================================
 const Sidebar = ({ activeView, onNavigate, walletState, utxos, selectedUtxos, onSelectionChange }) => {
-  const { connected, connect, disconnect, address, adaBalance, network } = walletState;
+  const { connected, connect, disconnect, address, adaBalance, network, pkh } = walletState;
   
   return (
     <aside className="w-full md:w-1/3 lg:w-1/4 space-y-6">
@@ -126,14 +132,22 @@ const Sidebar = ({ activeView, onNavigate, walletState, utxos, selectedUtxos, on
                 {network === 1 ? 'Mainnet' : 'Testnet'}
               </span>
             </div>
-            <div className="flex justify-between">
-              <span className="text-slate-400">Balance:</span>
-              <span className="font-mono font-bold">{(parseInt(adaBalance) / 1000000).toFixed(6)} ADA</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-slate-400">Address:</span>
-              <span className="font-mono text-violet-300 truncate">{address ? `${address.slice(0, 6)}...${address.slice(-4)}` : 'N/A'}</span>
-            </div>
+            {/* Use the new InfoRow component for these */}
+            <InfoRow 
+              label="Balance" 
+              value={`${(parseInt(adaBalance) / 1000000).toFixed(6)} ADA`} 
+              fullValue={(parseInt(adaBalance) / 1000000).toString()}
+            />
+            <InfoRow 
+              label="Address" 
+              value={address ? `${address.slice(0, 6)}...${address.slice(-4)}` : 'N/A'} 
+              fullValue={address}
+            />
+            <InfoRow 
+              label="PKH" 
+              value={pkh ? `${pkh.slice(0, 6)}...${pkh.slice(-4)}` : 'N/A'} 
+              fullValue={pkh}
+            />
           </div>
         )}
         <nav className="space-y-2">
@@ -483,5 +497,35 @@ const SummaryRow = ({ label, value }) => (
     <div className="flex justify-between items-center bg-slate-800 p-2 rounded-md">
         <span className="text-slate-400">{label}</span>
         <span className="font-mono font-bold">{value}</span>
+    </div>
+);
+
+// Add these to the bottom of page.tsx
+
+const CopyButton = ({ textToCopy }) => {
+    const [copied, setCopied] = useState(false);
+
+    const handleCopy = () => {
+        if (textToCopy) {
+            navigator.clipboard.writeText(textToCopy);
+            setCopied(true);
+            setTimeout(() => setCopied(false), 2000); // Reset icon after 2 seconds
+        }
+    };
+
+    return (
+        <button onClick={handleCopy} className="ml-2 text-slate-500 hover:text-slate-200">
+            {copied ? <ChevronsRight size={16} className="text-green-400" /> : <Clipboard size={16} />}
+        </button>
+    );
+};
+
+const InfoRow = ({ label, value, fullValue, isMono = true }) => (
+    <div className="flex justify-between items-center">
+        <span className="text-slate-400">{label}:</span>
+        <div className="flex items-center">
+            <span className={`font-mono ${isMono ? 'truncate' : ''}`}>{value}</span>
+            <CopyButton textToCopy={fullValue || value} />
+        </div>
     </div>
 );
