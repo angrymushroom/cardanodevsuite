@@ -287,7 +287,7 @@ const SimpleTransferView = ({ connected, wallet, address, utxos, updateWalletSta
 // ==================================================================
 // Feature View: Contract Interaction
 // ==================================================================
-const ContractInteractionView = ({ connected, wallet, address }) => {
+const ContractInteractionView = ({ connected, wallet, address, updateWalletState }) => {
   const [scriptAddress, setScriptAddress] = useState('');
   const [scriptUtxos, setScriptUtxos] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -300,6 +300,9 @@ const ContractInteractionView = ({ connected, wallet, address }) => {
 
   const [isSimulating, setIsSimulating] = useState(false);
   const [simulationResult, setSimulationResult] = useState<any | null>(null);
+
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [txHash, setTxHash] = useState<string | null>(null);
 
   const fetchScriptUtxos = async () => {
     if (!scriptAddress) return alert('Please enter a script address.');
@@ -386,6 +389,50 @@ const ContractInteractionView = ({ connected, wallet, address }) => {
     }
   }
 
+  async function handleBuildAndSubmit() {
+    if (!wallet || !selectedScriptUtxo) {
+      return alert("Please select a script UTxO to interact with.");
+    }
+    setIsSubmitting(true);
+    setError(null);
+    setTxHash(null);
+
+    try {
+      let redeemerData;
+      try {
+        redeemerData = JSON.parse(redeemer);
+      } catch {
+        throw new Error("Redeemer is not valid JSON.");
+      }
+
+      const tx = new Transaction({ initiator: wallet });
+
+      tx.redeemValue({
+        value: selectedScriptUtxo,
+        script: { version: 'V2', code: scriptCbor },
+        datum: selectedScriptUtxo.inline_datum ? 'inline' : selectedScriptUtxo.data_hash,
+        redeemer: redeemerData,
+      });
+
+      tx.setChangeAddress(address);
+
+      const unsignedTxCbor = await tx.build();
+      // true = partial sign, required for Plutus script transactions
+      const signedTx = await wallet.signTx(unsignedTxCbor, true);
+      const hash = await wallet.submitTx(signedTx);
+
+      setTxHash(hash);
+      setSelectedScriptUtxo(null);
+      setScriptUtxos([]);
+      if (updateWalletState) updateWalletState();
+
+    } catch (err: any) {
+      setError(err.message || 'Transaction failed. Ensure collateral is set in your wallet.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
   return (
     <div className="space-y-6">
       <div className="bg-slate-900 border border-slate-700 rounded-2xl p-8">
@@ -432,10 +479,21 @@ const ContractInteractionView = ({ connected, wallet, address }) => {
           <button onClick={handleSimulate} disabled={isSimulating || !connected || !selectedScriptUtxo} className="w-full bg-slate-700 hover:bg-slate-600 text-white font-bold py-3 px-4 rounded-lg transition-colors disabled:bg-slate-800 disabled:text-slate-500">
             {isSimulating ? 'Simulating...' : 'Simulate Transaction'}
           </button>
-          <button disabled className="w-full bg-violet-800 text-slate-500 font-bold py-3 px-4 rounded-lg cursor-not-allowed">Build & Submit</button>
+          <button
+            onClick={handleBuildAndSubmit}
+            disabled={isSubmitting || !connected || !selectedScriptUtxo || !redeemer.trim() || !scriptCbor.trim()}
+            className="w-full bg-violet-600 hover:bg-violet-700 text-white font-bold py-3 px-4 rounded-lg transition-colors disabled:bg-slate-800 disabled:text-slate-500"
+          >
+            {isSubmitting ? 'Submitting...' : 'Build & Submit'}
+          </button>
         </div>
         <SimulationResult result={simulationResult} />
         {error && <div className="mt-4 text-red-400 text-sm">{error}</div>}
+        {txHash && (
+          <div className="mt-4 text-green-400 text-sm text-center p-2 bg-green-900/50 rounded-md">
+            Success! Tx ID: <a href={`https://preprod.cardanoscan.io/transaction/${txHash}`} target="_blank" rel="noreferrer" className="underline font-mono text-xs break-all">{txHash}</a>
+          </div>
+        )}
       </div>
     </div>
   );
