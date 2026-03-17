@@ -5,6 +5,8 @@ import { useWallet } from '@meshsdk/react';
 import { BlockfrostProvider, MeshTxBuilder } from '@meshsdk/core';
 import { FormInput, FormTextarea } from './Form';
 
+const BLOCKFROST_API_KEY = 'preprodUfxEoynE8cv2NDY0NegobQrU78piDVnN';
+
 export default function DeployContractView({ connected, updateWalletState }) {
   const { wallet } = useWallet();
   const [isLoading, setIsLoading] = useState(false);
@@ -13,7 +15,6 @@ export default function DeployContractView({ connected, updateWalletState }) {
 
   const [scriptAddress, setScriptAddress] = useState('');
   const [amount, setAmount] = useState('');
-  const [ownerPkh, setOwnerPkh] = useState('');
   const [datum, setDatum] = useState(`{
     "constructor": 0,
     "fields": [
@@ -25,48 +26,47 @@ export default function DeployContractView({ connected, updateWalletState }) {
 
   async function handleDeploy() {
     if (!wallet) return;
+
+    // Validate inputs before any expensive operations
+    if (!scriptAddress || !amount) {
+      setError("Script Address and Amount are required.");
+      return;
+    }
+
+    const parsedAmount = parseFloat(amount);
+    if (isNaN(parsedAmount) || parsedAmount <= 0) {
+      setError("Amount must be a positive number.");
+      return;
+    }
+
+    let datumObject;
+    try {
+      datumObject = JSON.parse(datum);
+    } catch {
+      setError("Datum is not valid JSON.");
+      return;
+    }
+
     setIsLoading(true);
     setError(null);
     setTxHash(null);
 
     try {
-      const lovelaceAmount = (parseFloat(amount) * 1000000).toString();
+      const lovelaceAmount = (parsedAmount * 1000000).toString();
       const assets = [{ unit: "lovelace", quantity: lovelaceAmount }];
       const usedAddresses = await wallet.getUsedAddresses();
       const walletAddress = usedAddresses[0];
       const utxos = await wallet.getUtxos();
-      const provider = new BlockfrostProvider('preprodUfxEoynE8cv2NDY0NegobQrU78piDVnN');
+      const provider = new BlockfrostProvider(BLOCKFROST_API_KEY);
 
       const meshTxBuilder = new MeshTxBuilder({
         fetcher: provider,
         submitter: provider,
       });
 
-      // Parse the user-defined datum
-      let datumObject;
-      try {
-        datumObject = JSON.parse(datum);
-      } catch (e) {
-        throw new Error("Datum is not valid JSON.");
-      }
-
-
-      // --- START VALIDATION ---
-      if (!scriptAddress || !amount || !datumObject) {
-        throw new Error("Script Address, Amount, and datum json are all required.");
-      }
-
-      const parsedAmount = parseFloat(amount);
-      if (isNaN(parsedAmount) || parsedAmount <= 0) {
-          throw new Error("Amount must be a positive number.");
-      }
-
-      console.log("--datum object: ",datumObject)
-      // --- END VALIDATION ---
-
       const unsignedTx = await meshTxBuilder
         .txOut(scriptAddress, assets)
-        .txOutInlineDatumValue(datumObject,"JSON")
+        .txOutInlineDatumValue(datumObject, "JSON")
         .changeAddress(walletAddress)
         .selectUtxosFrom(utxos)
         .complete();
@@ -103,4 +103,4 @@ export default function DeployContractView({ connected, updateWalletState }) {
       </div>
     </div>
   );
-};
+}
