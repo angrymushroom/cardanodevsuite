@@ -5,9 +5,15 @@ import { useWallet } from '@meshsdk/react';
 import { BlockfrostProvider, MeshTxBuilder } from '@meshsdk/core';
 import { FormInput, FormTextarea } from './Form';
 
-const BLOCKFROST_API_KEY = 'preprodUfxEoynE8cv2NDY0NegobQrU78piDVnN';
+const BLOCKFROST_API_KEY = process.env.NEXT_PUBLIC_BLOCKFROST_API_KEY ?? '';
+const CARDANOSCAN_BASE_URL = process.env.NEXT_PUBLIC_CARDANOSCAN_BASE_URL ?? 'https://preprod.cardanoscan.io';
 
-export default function DeployContractView({ connected, updateWalletState }) {
+interface DeployContractViewProps {
+  connected: boolean;
+  updateWalletState: () => void;
+}
+
+export default function DeployContractView({ connected, updateWalletState }: DeployContractViewProps) {
   const { wallet } = useWallet();
   const [isLoading, setIsLoading] = useState(false);
   const [txHash, setTxHash] = useState<string | null>(null);
@@ -75,10 +81,10 @@ export default function DeployContractView({ connected, updateWalletState }) {
       const hash = await wallet.submitTx(signedTx);
 
       setTxHash(hash);
-      if (updateWalletState) updateWalletState();
+      updateWalletState();
 
-    } catch (err: any) {
-      setError(err.message || 'Deployment failed. Ensure collateral is set.');
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Deployment failed. Ensure collateral is set.');
     } finally {
       setIsLoading(false);
     }
@@ -97,7 +103,7 @@ export default function DeployContractView({ connected, updateWalletState }) {
         {error && <div className="mt-4 text-red-400 text-sm text-center p-2 bg-red-900/50 rounded-md">{error}</div>}
         {txHash && (
           <div className="mt-4 text-green-400 text-sm text-center p-2 bg-green-900/50 rounded-md">
-            Success! Tx ID: <a href={`https://preprod.cardanoscan.io/transaction/${txHash}`} target="_blank" rel="noreferrer" className="underline font-mono text-xs break-all">{txHash}</a>
+            Success! Tx ID: <a href={`${CARDANOSCAN_BASE_URL}/transaction/${txHash}`} target="_blank" rel="noreferrer" className="underline font-mono text-xs break-all">{txHash}</a>
           </div>
         )}
       </div>

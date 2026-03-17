@@ -4,14 +4,55 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { useWallet, useWalletList, useNetwork } from '@meshsdk/react';
 import { Transaction, UTxO } from '@meshsdk/core';
 import { PlutusData, PlutusDatumSchema } from '@emurgo/cardano-serialization-lib-asmjs';
-import { Sparkles, ArrowRight, Power, ChevronsRight, FileJson, Send, Search, Clipboard, Check } from 'lucide-react';
+import { Sparkles, ArrowRight, Power, ChevronsRight, FileJson, Send, Search, Clipboard, Check, Loader2 } from 'lucide-react';
 import UTXOSelector from '../components/UTXOSelector';
 import UTxODetailModal from '../components/UTxODetailModal';
-import SimulationResult from '../components/SimulationResult';
+import SimulationResult, { SimResult } from '../components/SimulationResult';
 import DeployContractView from '../components/DeployContractView';
 import { FormInput, FormTextarea } from '../components/Form';
 
-const BLOCKFROST_API_KEY = 'preprodUfxEoynE8cv2NDY0NegobQrU78piDVnN';
+const BLOCKFROST_API_KEY = process.env.NEXT_PUBLIC_BLOCKFROST_API_KEY ?? '';
+const BLOCKFROST_BASE_URL = process.env.NEXT_PUBLIC_BLOCKFROST_BASE_URL ?? 'https://cardano-preprod.blockfrost.io/api/v0';
+const CARDANOSCAN_BASE_URL = process.env.NEXT_PUBLIC_CARDANOSCAN_BASE_URL ?? 'https://preprod.cardanoscan.io';
+
+// Blockfrost UTxO shape returned from the REST API
+interface BlockfrostAmount {
+  unit: string;
+  quantity: string;
+}
+interface BlockfrostUtxo {
+  tx_hash: string;
+  output_index: number;
+  amount: BlockfrostAmount[];
+  data_hash: string | null;
+  inline_datum: string | null;
+}
+
+// Transaction pre-flight summary
+interface TxSummary {
+  fee: string;
+  change: string;
+  cbor: string;
+}
+
+// Wallet state props shared between components
+interface WalletState {
+  connected: boolean;
+  connect: (name: string) => void;
+  disconnect: () => void;
+  address: string | undefined;
+  adaBalance: string;
+  network: number | undefined;
+  pkh: string | null;
+}
+
+interface WalletProps {
+  connected: boolean;
+  wallet: ReturnType<typeof useWallet>['wallet'];
+  address: string | undefined;
+  updateWalletState: () => void;
+  selectedUtxos: UTxO[];
+}
 
 // Main Page Component (Landing Page)
 export default function Home() {
@@ -75,8 +116,8 @@ const DeveloperSuite = () => {
         setAddress(usedAddresses[0]);
         setAdaBalance(currentBalance.find(a => a.unit === 'lovelace')?.quantity || '0');
         setPkh(dRep.publicKeyHash);
-      } catch (e) {
-        console.error('Failed to fetch wallet data:', e);
+      } catch {
+        // Wallet state fetch failed silently — user will see stale data
       }
     } else {
       setAddress(undefined);
@@ -112,7 +153,16 @@ const DeveloperSuite = () => {
 // ==================================================================
 // Sidebar and Navigation Components
 // ==================================================================
-const Sidebar = ({ activeView, onNavigate, walletState, utxos, selectedUtxos, onSelectionChange }) => {
+interface SidebarProps {
+  activeView: string;
+  onNavigate: (view: string) => void;
+  walletState: WalletState;
+  utxos: UTxO[];
+  selectedUtxos: UTxO[];
+  onSelectionChange: (utxos: UTxO[]) => void;
+}
+
+const Sidebar = ({ activeView, onNavigate, walletState, utxos, selectedUtxos, onSelectionChange }: SidebarProps) => {
   const { connected, connect, disconnect, address, adaBalance, network, pkh } = walletState;
 
   return (
@@ -143,7 +193,7 @@ const Sidebar = ({ activeView, onNavigate, walletState, utxos, selectedUtxos, on
             <InfoRow
               label="PKH"
               value={pkh ? `${pkh.slice(0, 6)}...${pkh.slice(-4)}` : 'N/A'}
-              fullValue={pkh}
+              fullValue={pkh ?? undefined}
             />
           </div>
         )}
@@ -161,7 +211,12 @@ const Sidebar = ({ activeView, onNavigate, walletState, utxos, selectedUtxos, on
   );
 };
 
-const MainContent = ({ activeView, walletProps }) => {
+interface MainContentProps {
+  activeView: string;
+  walletProps: WalletProps;
+}
+
+const MainContent = ({ activeView, walletProps }: MainContentProps) => {
   return (
     <main className="flex-1">
       {activeView === 'simple_transfer' && <SimpleTransferView {...walletProps} />}
@@ -174,8 +229,7 @@ const MainContent = ({ activeView, walletProps }) => {
 // ==================================================================
 // Feature View: Simple Transfer
 // ==================================================================
-// selectedUtxos comes from the sidebar UTxO selector (managed by DeveloperSuite)
-const SimpleTransferView = ({ connected, wallet, address, updateWalletState, selectedUtxos }) => {
+const SimpleTransferView = ({ connected, wallet, address, updateWalletState, selectedUtxos }: WalletProps) => {
   const [loading, setLoading]       = useState(false);
   const [txHash, setTxHash]         = useState<string | null>(null);
   const [error, setError]           = useState<string | null>(null);
@@ -183,7 +237,7 @@ const SimpleTransferView = ({ connected, wallet, address, updateWalletState, sel
   const [amount, setAmount]         = useState('');
   const [metadata, setMetadata]     = useState('{}');
   const [unsignedTx, setUnsignedTx] = useState<string | null>(null);
-  const [summary, setSummary]       = useState<any>(null);
+  const [summary, setSummary]       = useState<TxSummary | null>(null);
 
   async function buildPreview() {
     if (!wallet) return;
@@ -208,15 +262,15 @@ const SimpleTransferView = ({ connected, wallet, address, updateWalletState, sel
       setUnsignedTx(builtTxCbor);
 
       const txBody = tx.txBuilder.meshTxBuilderBody;
-      const change = txBody.outputs.find((o: any) => o.address === address);
+      const change = txBody.outputs.find((o: { address: string }) => o.address === address);
       setSummary({
         fee: txBody.fee,
-        change: change?.amount.find((a: any) => a.unit === 'lovelace')?.quantity || '0',
+        change: change?.amount.find((a: { unit: string; quantity: string }) => a.unit === 'lovelace')?.quantity || '0',
         cbor: builtTxCbor,
       });
 
-    } catch (err: any) {
-      setError(err.message || 'Failed to build transaction.');
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Failed to build transaction.');
     } finally {
       setLoading(false);
     }
@@ -233,9 +287,9 @@ const SimpleTransferView = ({ connected, wallet, address, updateWalletState, sel
       setTxHash(hash);
       setSummary(null);
       setUnsignedTx(null);
-      if (updateWalletState) updateWalletState();
-    } catch (err: any) {
-      setError(err.message || "Transaction failed.");
+      updateWalletState();
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Transaction failed.");
     } finally {
       setLoading(false);
     }
@@ -273,7 +327,7 @@ const SimpleTransferView = ({ connected, wallet, address, updateWalletState, sel
             {loading && unsignedTx ? 'Submitting...' : 'Sign & Submit'}
           </button>
           {error && <div className="text-red-400 text-sm text-center p-2 bg-red-900/50 rounded-md">{error}</div>}
-          {txHash && <div className="text-green-400 text-sm text-center p-2 bg-green-900/50 rounded-md">Success! Tx ID: <a href={`https://preprod.cardanoscan.io/transaction/${txHash}`} target="_blank" rel="noreferrer" className="underline font-mono text-xs break-all">{txHash}</a></div>}
+          {txHash && <div className="text-green-400 text-sm text-center p-2 bg-green-900/50 rounded-md">Success! Tx ID: <a href={`${CARDANOSCAN_BASE_URL}/transaction/${txHash}`} target="_blank" rel="noreferrer" className="underline font-mono text-xs break-all">{txHash}</a></div>}
         </div>
       </div>
     </div>
@@ -283,23 +337,23 @@ const SimpleTransferView = ({ connected, wallet, address, updateWalletState, sel
 // ==================================================================
 // Feature View: Contract Interaction
 // ==================================================================
-const ContractInteractionView = ({ connected, wallet, address, updateWalletState }) => {
+const ContractInteractionView = ({ connected, wallet, address, updateWalletState }: WalletProps) => {
   const [scriptAddress, setScriptAddress] = useState('');
-  const [scriptUtxos, setScriptUtxos] = useState<any[]>([]);
+  const [scriptUtxos, setScriptUtxos] = useState<BlockfrostUtxo[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   // Separate errors for fetch (Step 1) vs simulate/submit (Step 3)
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
 
-  const [selectedScriptUtxo, setSelectedScriptUtxo] = useState<any | null>(null);
-  const [detailUtxo, setDetailUtxo] = useState<any | null>(null);
+  const [selectedScriptUtxo, setSelectedScriptUtxo] = useState<BlockfrostUtxo | null>(null);
+  const [detailUtxo, setDetailUtxo] = useState<BlockfrostUtxo | null>(null);
 
   const [datum, setDatum] = useState('');
   const [redeemer, setRedeemer] = useState('');
   const [scriptCbor, setScriptCbor] = useState('');
 
   const [isSimulating, setIsSimulating] = useState(false);
-  const [simulationResult, setSimulationResult] = useState<any | null>(null);
+  const [simulationResult, setSimulationResult] = useState<SimResult | null>(null);
 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [txHash, setTxHash] = useState<string | null>(null);
@@ -311,14 +365,14 @@ const ContractInteractionView = ({ connected, wallet, address, updateWalletState
     setScriptUtxos([]);
     try {
       const response = await fetch(
-        `https://cardano-preprod.blockfrost.io/api/v0/addresses/${scriptAddress}/utxos`,
+        `${BLOCKFROST_BASE_URL}/addresses/${scriptAddress}/utxos`,
         { headers: { project_id: BLOCKFROST_API_KEY } }
       );
       if (!response.ok) throw new Error('Failed to fetch UTxOs.');
-      const data = await response.json();
+      const data: BlockfrostUtxo[] = await response.json();
       setScriptUtxos(data);
-    } catch (err: any) {
-      setFetchError(err.message);
+    } catch (err: unknown) {
+      setFetchError(err instanceof Error ? err.message : 'Failed to fetch UTxOs.');
     } finally {
       setIsLoading(false);
     }
@@ -354,7 +408,7 @@ const ContractInteractionView = ({ connected, wallet, address, updateWalletState
 
       const tx = new Transaction({ initiator: wallet });
       tx.redeemValue({
-        value: selectedScriptUtxo,
+        value: selectedScriptUtxo as unknown as UTxO,
         script: { version: 'V2', code: scriptCbor },
         datum: selectedScriptUtxo.inline_datum ? 'inline' : selectedScriptUtxo.data_hash,
         redeemer: redeemerData,
@@ -364,7 +418,7 @@ const ContractInteractionView = ({ connected, wallet, address, updateWalletState
       const unsignedTxCbor = await tx.build();
 
       const response = await fetch(
-        'https://cardano-preprod.blockfrost.io/api/v0/utils/txs/evaluate',
+        `${BLOCKFROST_BASE_URL}/utils/txs/evaluate`,
         {
           method: 'POST',
           headers: {
@@ -380,11 +434,15 @@ const ContractInteractionView = ({ connected, wallet, address, updateWalletState
         throw new Error(result.message || 'Simulation request failed.');
       }
 
-      setSimulationResult({ result });
+      setSimulationResult({
+        isSuccess: true,
+        evaluationResult: result.EvaluationResult,
+      });
 
-    } catch (err: any) {
-      setActionError(err.message);
-      setSimulationResult({ error: true, reason: err.message });
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Simulation failed.';
+      setActionError(message);
+      setSimulationResult({ isSuccess: false, reason: message });
     } finally {
       setIsSimulating(false);
     }
@@ -406,7 +464,7 @@ const ContractInteractionView = ({ connected, wallet, address, updateWalletState
 
       const tx = new Transaction({ initiator: wallet });
       tx.redeemValue({
-        value: selectedScriptUtxo,
+        value: selectedScriptUtxo as unknown as UTxO,
         script: { version: 'V2', code: scriptCbor },
         datum: selectedScriptUtxo.inline_datum ? 'inline' : selectedScriptUtxo.data_hash,
         redeemer: redeemerData,
@@ -421,14 +479,16 @@ const ContractInteractionView = ({ connected, wallet, address, updateWalletState
       setTxHash(hash);
       setSelectedScriptUtxo(null);
       setScriptUtxos([]);
-      if (updateWalletState) updateWalletState();
+      updateWalletState();
 
-    } catch (err: any) {
-      setActionError(err.message || 'Transaction failed. Ensure collateral is set in your wallet.');
+    } catch (err: unknown) {
+      setActionError(err instanceof Error ? err.message : 'Transaction failed. Ensure collateral is set in your wallet.');
     } finally {
       setIsSubmitting(false);
     }
   }
+
+  const isStepsLocked = !selectedScriptUtxo;
 
   return (
     <div className="space-y-6">
@@ -473,7 +533,7 @@ const ContractInteractionView = ({ connected, wallet, address, updateWalletState
         {fetchError && <div className="mt-4 text-red-400 text-sm">{fetchError}</div>}
       </div>
 
-      <div className={`bg-slate-900 border border-slate-700 rounded-2xl p-8 transition-opacity ${!selectedScriptUtxo ? 'opacity-40' : ''}`}>
+      <div className={`bg-slate-900 border border-slate-700 rounded-2xl p-8 transition-opacity ${isStepsLocked ? 'opacity-40 pointer-events-none' : ''}`}>
         <h2 className="text-2xl font-bold mb-6">Step 2: Interaction Data</h2>
         <div className="space-y-4">
           <FormTextarea label="Datum (auto-populated)" value={datum} onChange={setDatum} />
@@ -482,11 +542,16 @@ const ContractInteractionView = ({ connected, wallet, address, updateWalletState
         </div>
       </div>
 
-      <div className={`bg-slate-900 border border-slate-700 rounded-2xl p-8 transition-opacity ${!selectedScriptUtxo ? 'opacity-40' : ''}`}>
+      <div className={`bg-slate-900 border border-slate-700 rounded-2xl p-8 transition-opacity ${isStepsLocked ? 'opacity-40 pointer-events-none' : ''}`}>
         <h2 className="text-2xl font-bold mb-6">Step 3: Actions</h2>
         <div className="space-y-4">
-          <button onClick={handleSimulate} disabled={isSimulating || !connected || !selectedScriptUtxo} className="w-full bg-slate-700 hover:bg-slate-600 text-white font-bold py-3 px-4 rounded-lg transition-colors disabled:bg-slate-800 disabled:text-slate-500">
-            {isSimulating ? 'Simulating...' : 'Simulate Transaction'}
+          <button onClick={handleSimulate} disabled={isSimulating || !connected || !selectedScriptUtxo} className="w-full bg-slate-700 hover:bg-slate-600 text-white font-bold py-3 px-4 rounded-lg transition-colors disabled:bg-slate-800 disabled:text-slate-500 flex items-center justify-center gap-2">
+            {isSimulating ? (
+              <>
+                <Loader2 size={16} className="animate-spin" />
+                Simulating...
+              </>
+            ) : 'Simulate Transaction'}
           </button>
           <button
             onClick={handleBuildAndSubmit}
@@ -500,7 +565,7 @@ const ContractInteractionView = ({ connected, wallet, address, updateWalletState
         {actionError && <div className="mt-4 text-red-400 text-sm">{actionError}</div>}
         {txHash && (
           <div className="mt-4 text-green-400 text-sm text-center p-2 bg-green-900/50 rounded-md">
-            Success! Tx ID: <a href={`https://preprod.cardanoscan.io/transaction/${txHash}`} target="_blank" rel="noreferrer" className="underline font-mono text-xs break-all">{txHash}</a>
+            Success! Tx ID: <a href={`${CARDANOSCAN_BASE_URL}/transaction/${txHash}`} target="_blank" rel="noreferrer" className="underline font-mono text-xs break-all">{txHash}</a>
           </div>
         )}
       </div>
@@ -513,7 +578,14 @@ const ContractInteractionView = ({ connected, wallet, address, updateWalletState
 // ==================================================================
 // UI Helper Sub-Components
 // ==================================================================
-const NavItem = ({ icon, label, isActive, onClick }) => (
+interface NavItemProps {
+  icon: React.ReactNode;
+  label: string;
+  isActive: boolean;
+  onClick: () => void;
+}
+
+const NavItem = ({ icon, label, isActive, onClick }: NavItemProps) => (
   <button onClick={onClick} className={`w-full flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium transition-colors ${isActive ? 'bg-violet-600 text-white' : 'text-slate-300 hover:bg-slate-800'}`}>
     {icon}
     <span>{label}</span>
@@ -521,7 +593,13 @@ const NavItem = ({ icon, label, isActive, onClick }) => (
   </button>
 );
 
-const CustomWalletConnector = ({ onConnect, connected, onDisconnect }) => {
+interface CustomWalletConnectorProps {
+  onConnect: (name: string) => void;
+  connected: boolean;
+  onDisconnect: () => void;
+}
+
+const CustomWalletConnector = ({ onConnect, connected, onDisconnect }: CustomWalletConnectorProps) => {
   const wallets = useWalletList();
   const [isModalOpen, setIsModalOpen] = useState(false);
   const handleConnect = (walletName: string) => {
@@ -551,21 +629,38 @@ const CustomWalletConnector = ({ onConnect, connected, onDisconnect }) => {
   );
 };
 
-const SummaryRow = ({ label, value }) => (
+interface SummaryRowProps {
+  label: string;
+  value: string;
+}
+
+const SummaryRow = ({ label, value }: SummaryRowProps) => (
   <div className="flex justify-between items-center bg-slate-800 p-2 rounded-md">
     <span className="text-slate-400">{label}</span>
     <span className="font-mono font-bold">{value}</span>
   </div>
 );
 
-const CopyButton = ({ textToCopy }) => {
+interface CopyButtonProps {
+  textToCopy: string | undefined;
+}
+
+const CopyButton = ({ textToCopy }: CopyButtonProps) => {
   const [copied, setCopied] = useState(false);
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (timeoutRef.current) clearTimeout(timeoutRef.current);
+    };
+  }, []);
 
   const handleCopy = () => {
     if (textToCopy) {
       navigator.clipboard.writeText(textToCopy);
       setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+      if (timeoutRef.current) clearTimeout(timeoutRef.current);
+      timeoutRef.current = setTimeout(() => setCopied(false), 2000);
     }
   };
 
@@ -576,7 +671,14 @@ const CopyButton = ({ textToCopy }) => {
   );
 };
 
-const InfoRow = ({ label, value, fullValue, isMono = true }) => (
+interface InfoRowProps {
+  label: string;
+  value: string;
+  fullValue?: string;
+  isMono?: boolean;
+}
+
+const InfoRow = ({ label, value, fullValue, isMono = true }: InfoRowProps) => (
   <div className="flex justify-between items-center">
     <span className="text-slate-400">{label}:</span>
     <div className="flex items-center">

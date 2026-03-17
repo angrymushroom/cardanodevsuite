@@ -1,16 +1,34 @@
 'use client';
 
-import { UTxO } from '@meshsdk/core';
 import { X } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { PlutusData, PlutusDatumSchema } from '@emurgo/cardano-serialization-lib-asmjs';
 
+interface Amount {
+  unit: string;
+  quantity: string;
+}
+
+// Supports both Blockfrost REST API shape and MeshSDK UTxO shape
+interface BlockfrostUtxo {
+  tx_hash: string;
+  output_index: number;
+  amount: Amount[];
+  data_hash: string | null;
+  inline_datum: string | null;
+}
+
+interface MeshUtxo {
+  input: { txHash: string; outputIndex: number };
+  output: { address: string; amount: Amount[]; dataHash?: string; plutusData?: string };
+}
+
 type UTxODetailModalProps = {
-  utxo: any | null;
+  utxo: BlockfrostUtxo | MeshUtxo;
   onClose: () => void;
 };
 
-const DetailRow = ({ label, value, isMono = true, isBreakable = false }) => (
+const DetailRow = ({ label, value, isMono = true, isBreakable = false }: { label: string; value?: string; isMono?: boolean; isBreakable?: boolean }) => (
   <div>
     <p className="text-sm text-slate-400">{label}</p>
     <p className={`font-semibold text-slate-100 ${isMono ? 'font-mono text-xs' : ''} ${isBreakable ? 'break-all' : 'truncate'}`}>
@@ -20,12 +38,14 @@ const DetailRow = ({ label, value, isMono = true, isBreakable = false }) => (
 );
 
 export default function UTxODetailModal({ utxo, onClose }: UTxODetailModalProps) {
-  const [decodedDatum, setDecodedDatum] = useState<any | null>(null);
-  const amountList = utxo?.output ? utxo.output.amount : utxo?.amount || [];
-  const dataHash = utxo?.output ? utxo.output.dataHash : utxo?.data_hash;
-  const inlineDatum = utxo?.output ? utxo.output.plutusData : utxo?.inline_datum;
-  const txHash = utxo?.input ? utxo.input.txHash : utxo?.tx_hash;
-  const outputIndex = utxo?.input ? utxo.input.outputIndex : utxo?.output_index;
+  const [decodedDatum, setDecodedDatum] = useState<object | null>(null);
+
+  const isMesh = 'input' in utxo;
+  const amountList: Amount[] = isMesh ? utxo.output.amount : utxo.amount;
+  const dataHash: string | null | undefined = isMesh ? utxo.output.dataHash : utxo.data_hash;
+  const inlineDatum: string | null | undefined = isMesh ? utxo.output.plutusData : utxo.inline_datum;
+  const txHash: string = isMesh ? utxo.input.txHash : utxo.tx_hash;
+  const outputIndex: number = isMesh ? utxo.input.outputIndex : utxo.output_index;
 
   useEffect(() => {
     if (inlineDatum) {
@@ -33,16 +53,13 @@ export default function UTxODetailModal({ utxo, onClose }: UTxODetailModalProps)
         const plutusData = PlutusData.from_hex(inlineDatum);
         const datumJson = JSON.parse(plutusData.to_json(PlutusDatumSchema.DetailedSchema));
         setDecodedDatum(datumJson);
-      } catch (error) {
-        console.error("Failed to decode datum locally:", error);
+      } catch {
         setDecodedDatum({ error: 'Failed to decode datum CBOR.' });
       }
     } else {
       setDecodedDatum(null);
     }
   }, [inlineDatum]);
-
-  if (!utxo) return null;
 
   const totalAda = (parseInt(amountList.find(a => a.unit === 'lovelace')?.quantity || '0') / 1000000).toFixed(6);
   const otherAssets = amountList.filter(a => a.unit !== 'lovelace');
@@ -60,8 +77,8 @@ export default function UTxODetailModal({ utxo, onClose }: UTxODetailModalProps)
           <DetailRow label="Total ADA" value={totalAda} isBreakable />
           <DetailRow label="Tx Hash" value={txHash} isBreakable />
           <DetailRow label="Output Index" value={outputIndex?.toString()} isMono={false} />
-          <DetailRow label="Datum Hash" value={dataHash} isBreakable />
-          <DetailRow label="Inline Datum (CBOR)" value={inlineDatum} isBreakable />
+          <DetailRow label="Datum Hash" value={dataHash ?? undefined} isBreakable />
+          <DetailRow label="Inline Datum (CBOR)" value={inlineDatum ?? undefined} isBreakable />
           {otherAssets.length > 0 && (
             <div>
               <p className="text-sm text-slate-400">Other Assets</p>
