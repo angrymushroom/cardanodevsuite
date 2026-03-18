@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useWallet, useWalletList, useNetwork } from '@meshsdk/react';
-import { Transaction, UTxO } from '@meshsdk/core';
+import { Transaction, UTxO, MeshTxBuilder, BlockfrostProvider } from '@meshsdk/core';
 import { PlutusData, PlutusDatumSchema } from '@emurgo/cardano-serialization-lib-asmjs';
 import { Sparkles, ArrowRight, Power, ChevronsRight, FileJson, Send, Search, Clipboard, Check, Loader2 } from 'lucide-react';
 import UTXOSelector from '../components/UTXOSelector';
@@ -337,11 +337,12 @@ const SimpleTransferView = ({ connected, wallet, address, updateWalletState, sel
 // ==================================================================
 // Feature View: Contract Interaction
 // ==================================================================
+type PlutusVersion = 'V1' | 'V2' | 'V3';
+
 const ContractInteractionView = ({ connected, wallet, address, updateWalletState }: WalletProps) => {
   const [scriptAddress, setScriptAddress] = useState('');
   const [scriptUtxos, setScriptUtxos] = useState<BlockfrostUtxo[]>([]);
   const [isLoading, setIsLoading] = useState(false);
-  // Separate errors for fetch (Step 1) vs simulate/submit (Step 3)
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
 
@@ -351,6 +352,7 @@ const ContractInteractionView = ({ connected, wallet, address, updateWalletState
   const [datum, setDatum] = useState('');
   const [redeemer, setRedeemer] = useState('');
   const [scriptCbor, setScriptCbor] = useState('');
+  const [scriptVersion, setScriptVersion] = useState<PlutusVersion>('V2');
 
   const [isSimulating, setIsSimulating] = useState(false);
   const [simulationResult, setSimulationResult] = useState<SimResult | null>(null);
@@ -388,9 +390,77 @@ const ContractInteractionView = ({ connected, wallet, address, updateWalletState
         setDatum('// Failed to decode datum CBOR.');
       }
     } else {
-      setDatum('// No inline datum found on selected UTxO.');
+      setDatum('');
     }
   }, [selectedScriptUtxo]);
+
+  // Builds the redeem transaction using MeshTxBuilder (canonical MeshJS pattern).
+  // Returns the unsigned tx as a CBOR hex string.
+  async function buildRedeemTx(): Promise<string> {
+    if (!wallet || !selectedScriptUtxo || !address) {
+      throw new Error('Wallet not connected or no UTxO selected.');
+    }
+
+    let redeemerJson: object;
+    try {
+      redeemerJson = JSON.parse(redeemer);
+    } catch {
+      throw new Error('Redeemer is not valid JSON. Expected Cardano DetailedSchema, e.g. { "constructor": 0, "fields": [] }');
+    }
+
+    const walletUtxos = await wallet.getUtxos();
+
+    const collateralUtxos = await wallet.getCollateral();
+    if (!collateralUtxos || collateralUtxos.length === 0) {
+      throw new Error('No collateral UTxO found. Please set collateral in your wallet (Settings → Collateral). It must be a pure-ADA UTxO of at least 5 ADA.');
+    }
+    const collateral = collateralUtxos[0];
+
+    const provider = new BlockfrostProvider(BLOCKFROST_API_KEY);
+    const txBuilder = new MeshTxBuilder({
+      fetcher: provider,
+      submitter: provider,
+      evaluator: provider,
+    });
+
+    const inputAmount = selectedScriptUtxo.amount.map(a => ({ unit: a.unit, quantity: a.quantity }));
+
+    txBuilder
+      .spendingPlutusScript(scriptVersion)
+      .txIn(
+        selectedScriptUtxo.tx_hash,
+        selectedScriptUtxo.output_index,
+        inputAmount,
+        scriptAddress,
+      )
+      .txInScript(scriptCbor);
+
+    if (selectedScriptUtxo.inline_datum) {
+      txBuilder.txInInlineDatumPresent();
+    } else {
+      let datumJson: object;
+      try {
+        datumJson = JSON.parse(datum);
+      } catch {
+        throw new Error('Datum is not valid JSON. It is required when the UTxO has no inline datum.');
+      }
+      txBuilder.txInDatumValue(datumJson, 'JSON');
+    }
+
+    txBuilder
+      .txInRedeemerValue(redeemerJson, 'JSON')
+      .changeAddress(address)
+      .selectUtxosFrom(walletUtxos)
+      .txInCollateral(
+        collateral.input.txHash,
+        collateral.input.outputIndex,
+        collateral.output.amount,
+        collateral.output.address,
+      );
+
+    await txBuilder.complete();
+    return txBuilder.txHex;
+  }
 
   async function handleSimulate() {
     if (!wallet || !selectedScriptUtxo) return;
@@ -399,23 +469,10 @@ const ContractInteractionView = ({ connected, wallet, address, updateWalletState
     setSimulationResult(null);
 
     try {
-      let redeemerData;
-      try {
-        redeemerData = JSON.parse(redeemer);
-      } catch {
-        throw new Error("Redeemer is not valid JSON.");
-      }
+      const unsignedTxHex = await buildRedeemTx();
 
-      const tx = new Transaction({ initiator: wallet });
-      tx.redeemValue({
-        value: selectedScriptUtxo as unknown as UTxO,
-        script: { version: 'V2', code: scriptCbor },
-        datum: selectedScriptUtxo.inline_datum ? 'inline' : selectedScriptUtxo.data_hash,
-        redeemer: redeemerData,
-      });
-      tx.setChangeAddress(address);
-
-      const unsignedTxCbor = await tx.build();
+      // Blockfrost evaluate endpoint expects raw CBOR bytes, not a hex string
+      const txBytes = Uint8Array.from(Buffer.from(unsignedTxHex, 'hex'));
 
       const response = await fetch(
         `${BLOCKFROST_BASE_URL}/utils/txs/evaluate`,
@@ -425,7 +482,7 @@ const ContractInteractionView = ({ connected, wallet, address, updateWalletState
             'Content-Type': 'application/cbor',
             'project_id': BLOCKFROST_API_KEY,
           },
-          body: unsignedTxCbor,
+          body: txBytes,
         }
       );
 
@@ -455,25 +512,9 @@ const ContractInteractionView = ({ connected, wallet, address, updateWalletState
     setTxHash(null);
 
     try {
-      let redeemerData;
-      try {
-        redeemerData = JSON.parse(redeemer);
-      } catch {
-        throw new Error("Redeemer is not valid JSON.");
-      }
-
-      const tx = new Transaction({ initiator: wallet });
-      tx.redeemValue({
-        value: selectedScriptUtxo as unknown as UTxO,
-        script: { version: 'V2', code: scriptCbor },
-        datum: selectedScriptUtxo.inline_datum ? 'inline' : selectedScriptUtxo.data_hash,
-        redeemer: redeemerData,
-      });
-      tx.setChangeAddress(address);
-
-      const unsignedTxCbor = await tx.build();
+      const unsignedTxHex = await buildRedeemTx();
       // partialSign=true is required for Plutus script transactions
-      const signedTx = await wallet.signTx(unsignedTxCbor, true);
+      const signedTx = await wallet.signTx(unsignedTxHex, true);
       const hash = await wallet.submitTx(signedTx);
 
       setTxHash(hash);
@@ -482,7 +523,7 @@ const ContractInteractionView = ({ connected, wallet, address, updateWalletState
       updateWalletState();
 
     } catch (err: unknown) {
-      setActionError(err instanceof Error ? err.message : 'Transaction failed. Ensure collateral is set in your wallet.');
+      setActionError(err instanceof Error ? err.message : 'Transaction failed.');
     } finally {
       setIsSubmitting(false);
     }
@@ -536,16 +577,31 @@ const ContractInteractionView = ({ connected, wallet, address, updateWalletState
       <div className={`bg-slate-900 border border-slate-700 rounded-2xl p-8 transition-opacity ${isStepsLocked ? 'opacity-40 pointer-events-none' : ''}`}>
         <h2 className="text-2xl font-bold mb-6">Step 2: Interaction Data</h2>
         <div className="space-y-4">
-          <FormTextarea label="Datum (auto-populated)" value={datum} onChange={setDatum} />
-          <FormTextarea label="Redeemer (JSON)" value={redeemer} onChange={setRedeemer} placeholder='{ "constructor": 0, "fields": [] }' />
-          <FormTextarea label="Script CBOR Hex" value={scriptCbor} onChange={setScriptCbor} placeholder='58... (from your plutus.json)' />
+          <div>
+            <label className="block text-sm font-medium text-slate-300 mb-1">Plutus Script Version</label>
+            <div className="flex gap-2">
+              {(['V1', 'V2', 'V3'] as PlutusVersion[]).map(v => (
+                <button
+                  key={v}
+                  onClick={() => setScriptVersion(v)}
+                  className={`px-4 py-2 rounded-lg text-sm font-bold transition-colors ${scriptVersion === v ? 'bg-violet-600 text-white' : 'bg-slate-800 text-slate-400 hover:bg-slate-700'}`}
+                >
+                  {v}
+                </button>
+              ))}
+            </div>
+            <p className="text-xs text-slate-500 mt-1">Aiken compiles to V3 by default. PlutusTx legacy contracts are typically V2.</p>
+          </div>
+          <FormTextarea label={selectedScriptUtxo?.inline_datum ? 'Datum (decoded from inline datum)' : 'Datum (JSON — required if no inline datum)'} value={datum} onChange={setDatum} placeholder='{ "constructor": 0, "fields": [] }' />
+          <FormTextarea label="Redeemer (JSON — Cardano DetailedSchema)" value={redeemer} onChange={setRedeemer} placeholder='{ "constructor": 0, "fields": [] }' />
+          <FormTextarea label="Script CBOR Hex" value={scriptCbor} onChange={setScriptCbor} placeholder='58... (from your plutus.json or aiken blueprint)' />
         </div>
       </div>
 
       <div className={`bg-slate-900 border border-slate-700 rounded-2xl p-8 transition-opacity ${isStepsLocked ? 'opacity-40 pointer-events-none' : ''}`}>
         <h2 className="text-2xl font-bold mb-6">Step 3: Actions</h2>
         <div className="space-y-4">
-          <button onClick={handleSimulate} disabled={isSimulating || !connected || !selectedScriptUtxo} className="w-full bg-slate-700 hover:bg-slate-600 text-white font-bold py-3 px-4 rounded-lg transition-colors disabled:bg-slate-800 disabled:text-slate-500 flex items-center justify-center gap-2">
+          <button onClick={handleSimulate} disabled={isSimulating || !connected || !selectedScriptUtxo || !scriptCbor.trim()} className="w-full bg-slate-700 hover:bg-slate-600 text-white font-bold py-3 px-4 rounded-lg transition-colors disabled:bg-slate-800 disabled:text-slate-500 flex items-center justify-center gap-2">
             {isSimulating ? (
               <>
                 <Loader2 size={16} className="animate-spin" />
