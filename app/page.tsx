@@ -1,41 +1,29 @@
 'use client';
 
-import { useState, useEffect, useRef, useCallback } from 'react'; // useRef kept for CopyButton timeout
+import { useState, useEffect, useCallback } from 'react';
 import { useWallet, useWalletList, useNetwork } from '@meshsdk/react';
-import { Transaction, UTxO, MeshTxBuilder, BlockfrostProvider } from '@meshsdk/core';
-import { PlutusData, PlutusDatumSchema } from '@emurgo/cardano-serialization-lib-asmjs';
-import { Sparkles, Power, ChevronsRight, FileJson, Send, Search, Clipboard, Check, Loader2 } from 'lucide-react';
+import { UTxO } from '@meshsdk/core';
+import { Address, BaseAddress } from '@emurgo/cardano-serialization-lib-asmjs';
+import { Sparkles, Power, ChevronsRight, FileJson, Send, Search, AlertTriangle } from 'lucide-react';
 import UTXOSelector from '../components/UTXOSelector';
-import UTxODetailModal from '../components/UTxODetailModal';
-import SimulationResult, { SimResult } from '../components/SimulationResult';
 import DeployContractView from '../components/DeployContractView';
-import { FormInput, FormTextarea } from '../components/Form';
+import SimpleTransferView from '../components/SimpleTransferView';
+import ContractInteractionView from '../components/ContractInteractionView';
+import CopyButton from '../components/CopyButton';
 
 const BLOCKFROST_API_KEY = process.env.NEXT_PUBLIC_BLOCKFROST_API_KEY ?? '';
-const BLOCKFROST_BASE_URL = process.env.NEXT_PUBLIC_BLOCKFROST_BASE_URL ?? 'https://cardano-preprod.blockfrost.io/api/v0';
-const CARDANOSCAN_BASE_URL = process.env.NEXT_PUBLIC_CARDANOSCAN_BASE_URL ?? 'https://preprod.cardanoscan.io';
 
-// Blockfrost UTxO shape returned from the REST API
-interface BlockfrostAmount {
-  unit: string;
-  quantity: string;
-}
-interface BlockfrostUtxo {
-  tx_hash: string;
-  output_index: number;
-  amount: BlockfrostAmount[];
-  data_hash: string | null;
-  inline_datum: string | null;
+// ==================================================================
+// Shared types
+// ==================================================================
+export interface WalletProps {
+  connected: boolean;
+  wallet: ReturnType<typeof useWallet>['wallet'];
+  address: string | undefined;
+  updateWalletState: () => void;
+  selectedUtxos: UTxO[];
 }
 
-// Transaction pre-flight summary
-interface TxSummary {
-  fee: string;
-  change: string;
-  cbor: string;
-}
-
-// Wallet state props shared between components
 interface WalletState {
   connected: boolean;
   connect: (name: string) => void;
@@ -46,15 +34,9 @@ interface WalletState {
   pkh: string | null;
 }
 
-interface WalletProps {
-  connected: boolean;
-  wallet: ReturnType<typeof useWallet>['wallet'];
-  address: string | undefined;
-  updateWalletState: () => void;
-  selectedUtxos: UTxO[];
-}
-
-// Main Page Component
+// ==================================================================
+// Main Page
+// ==================================================================
 export default function Home() {
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100">
@@ -74,7 +56,7 @@ export default function Home() {
 }
 
 // ==================================================================
-// The Main App Container
+// Main App Container
 // ==================================================================
 const DeveloperSuite = () => {
   const [activeView, setActiveView] = useState('simple_transfer');
@@ -90,15 +72,26 @@ const DeveloperSuite = () => {
   const updateWalletState = useCallback(async () => {
     if (connected && wallet) {
       try {
-        const currentUtxos = await wallet.getUtxos();
-        const currentBalance = await wallet.getBalance();
-        const usedAddresses = await wallet.getUsedAddresses();
-        const dRep = await wallet.getDRep();
+        // Fetch all wallet data concurrently
+        const [currentUtxos, currentBalance, usedAddresses] = await Promise.all([
+          wallet.getUtxos(),
+          wallet.getBalance(),
+          wallet.getUsedAddresses(),
+        ]);
 
+        const addr = usedAddresses[0];
         setUtxos(currentUtxos || []);
-        setAddress(usedAddresses[0]);
+        setAddress(addr);
         setAdaBalance(currentBalance.find(a => a.unit === 'lovelace')?.quantity || '0');
-        setPkh(dRep.publicKeyHash);
+
+        // Parse PKH directly from the bech32 address (more reliable than getDRep)
+        try {
+          const cslAddr = Address.from_bech32(addr);
+          const baseAddr = BaseAddress.from_address(cslAddr);
+          setPkh(baseAddr?.payment_cred().to_keyhash()?.to_hex() ?? null);
+        } catch {
+          setPkh(null);
+        }
       } catch {
         // Wallet state fetch failed silently — user will see stale data
       }
@@ -107,6 +100,7 @@ const DeveloperSuite = () => {
       setAdaBalance('0');
       setUtxos([]);
       setSelectedUtxos([]);
+      setPkh(null);
     }
   }, [connected, wallet]);
 
@@ -132,9 +126,8 @@ const DeveloperSuite = () => {
   );
 };
 
-
 // ==================================================================
-// Sidebar and Navigation Components
+// Sidebar
 // ==================================================================
 interface SidebarProps {
   activeView: string;
@@ -163,21 +156,9 @@ const Sidebar = ({ activeView, onNavigate, walletState, utxos, selectedUtxos, on
                 {network === 1 ? 'Mainnet' : 'Testnet'}
               </span>
             </div>
-            <InfoRow
-              label="Balance"
-              value={`${(parseInt(adaBalance) / 1000000).toFixed(2)} ADA`}
-              fullValue={(parseInt(adaBalance) / 1000000).toFixed(6)}
-            />
-            <InfoRow
-              label="Address"
-              value={address ? `${address.slice(0, 6)}...${address.slice(-4)}` : 'N/A'}
-              fullValue={address}
-            />
-            <InfoRow
-              label="PKH"
-              value={pkh ? `${pkh.slice(0, 6)}...${pkh.slice(-4)}` : 'N/A'}
-              fullValue={pkh ?? undefined}
-            />
+            <InfoRow label="Balance" value={`${(parseInt(adaBalance) / 1000000).toFixed(2)} ADA`} fullValue={(parseInt(adaBalance) / 1000000).toFixed(6)} />
+            <InfoRow label="Address" value={address ? `${address.slice(0, 6)}...${address.slice(-4)}` : 'N/A'} fullValue={address} />
+            <InfoRow label="PKH" value={pkh ? `${pkh.slice(0, 6)}...${pkh.slice(-4)}` : 'N/A'} fullValue={pkh ?? undefined} />
           </div>
         )}
         <nav className="space-y-2">
@@ -196,454 +177,33 @@ const Sidebar = ({ activeView, onNavigate, walletState, utxos, selectedUtxos, on
   );
 };
 
-interface MainContentProps {
-  activeView: string;
-  walletProps: WalletProps;
-}
-
-const MainContent = ({ activeView, walletProps }: MainContentProps) => {
-  return (
-    <main className="flex-1">
-      {!walletProps.connected && (
-        <div className="mb-4 flex items-center gap-3 bg-slate-800 border border-slate-600 rounded-xl px-4 py-3 text-sm text-slate-300">
-          <Power size={16} className="text-violet-400 shrink-0" />
-          Connect your wallet from the sidebar to get started.
-        </div>
-      )}
-      {activeView === 'simple_transfer' && <SimpleTransferView {...walletProps} />}
-      {activeView === 'deploy_contract' && <DeployContractView {...walletProps} />}
-      {activeView === 'contract_simulator' && <ContractInteractionView {...walletProps} />}
-    </main>
-  );
-};
-
 // ==================================================================
-// Feature View: Simple Transfer
+// Main Content
 // ==================================================================
-const SimpleTransferView = ({ connected, wallet, address, updateWalletState, selectedUtxos }: WalletProps) => {
-  const [loading, setLoading]       = useState(false);
-  const [txHash, setTxHash]         = useState<string | null>(null);
-  const [error, setError]           = useState<string | null>(null);
-  const [recipient, setRecipient]   = useState('');
-  const [amount, setAmount]         = useState('');
-  const [metadata, setMetadata]     = useState('{}');
-  const [unsignedTx, setUnsignedTx] = useState<string | null>(null);
-  const [summary, setSummary]       = useState<TxSummary | null>(null);
-
-  async function buildPreview() {
-    if (!wallet) return;
-    setLoading(true);
-    setError(null);
-    setSummary(null);
-    setUnsignedTx(null);
-    try {
-      const tx = new Transaction({ initiator: wallet });
-      tx.sendLovelace(recipient, (parseFloat(amount) * 1000000).toString());
-      if (selectedUtxos.length > 0) tx.setTxInputs(selectedUtxos);
-
-      if (metadata.trim() !== '{}' && metadata.trim() !== '') {
-        const metadataJson = JSON.parse(metadata);
-        const label = Object.keys(metadataJson)[0];
-        tx.setMetadata(parseInt(label), metadataJson[label]);
-      }
-
-      const builtTxCbor = await tx.build();
-      if (!builtTxCbor) throw new Error("Failed to build transaction.");
-
-      setUnsignedTx(builtTxCbor);
-
-      const txBody = tx.txBuilder.meshTxBuilderBody;
-      const change = txBody.outputs.find((o: { address: string }) => o.address === address);
-      setSummary({
-        fee: txBody.fee,
-        change: change?.amount.find((a: { unit: string; quantity: string }) => a.unit === 'lovelace')?.quantity || '0',
-        cbor: builtTxCbor,
-      });
-
-    } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Failed to build transaction.');
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function signAndSubmit() {
-    if (!wallet || !unsignedTx) return;
-    setLoading(true);
-    setError(null);
-    setTxHash(null);
-    try {
-      const signedTx = await wallet.signTx(unsignedTx);
-      const hash = await wallet.submitTx(signedTx);
-      setTxHash(hash);
-      setSummary(null);
-      setUnsignedTx(null);
-      updateWalletState();
-    } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Transaction failed.");
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  return (
-    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-      <div className="space-y-6">
-        <div className="bg-slate-900 border border-slate-700 rounded-2xl p-6">
-          <h2 className="text-xl font-bold mb-4">Builder</h2>
-          <div className="space-y-4">
-            <FormInput label="Recipient Address" placeholder="addr_test1..." value={recipient} onChange={setRecipient} />
-            <FormInput label="Amount (ADA)" placeholder="0.0" value={amount} onChange={setAmount} />
-            <FormTextarea label="Metadata (JSON, optional)" value={metadata} onChange={setMetadata} />
-          </div>
-        </div>
+const MainContent = ({ activeView, walletProps }: { activeView: string; walletProps: WalletProps }) => (
+  <main className="flex-1 space-y-4">
+    {!BLOCKFROST_API_KEY && (
+      <div className="flex items-center gap-3 bg-amber-900/40 border border-amber-600 rounded-xl px-4 py-3 text-sm text-amber-300">
+        <AlertTriangle size={16} className="shrink-0" />
+        <span><code className="font-mono">NEXT_PUBLIC_BLOCKFROST_API_KEY</code> is not set — contract features will not work. See <code className="font-mono">.env.example</code>.</span>
       </div>
-      <div className="space-y-6">
-        <div className="bg-slate-900 border border-slate-700 rounded-2xl p-6">
-          <h2 className="text-xl font-bold mb-4">Pre-flight Summary</h2>
-          <div className="space-y-3 text-sm">
-            <SummaryRow label="Calculated Fee:" value={summary ? `${parseInt(summary.fee) / 1000000} ADA` : '-'} />
-            <SummaryRow label="Change Output:" value={summary ? `${parseInt(summary.change) / 1000000} ADA` : '-'} />
-            <div className="pt-2">
-              <div className="flex items-center justify-between mb-1">
-                <label className="block text-sm font-medium text-slate-300">Transaction CBOR</label>
-                {summary && <CopyButton textToCopy={summary.cbor} />}
-              </div>
-              <textarea readOnly value={summary ? summary.cbor : ''} className="w-full h-24 bg-slate-950 text-xs p-2 rounded-md font-mono break-all resize-none border border-slate-700"></textarea>
-            </div>
-          </div>
-        </div>
-        <div className="bg-slate-900 border border-slate-700 rounded-2xl p-6 space-y-4">
-          <button onClick={buildPreview} disabled={loading || !connected} className="w-full bg-slate-700 hover:bg-slate-600 text-white font-bold py-3 px-4 rounded-lg transition-colors disabled:bg-slate-800 disabled:text-slate-500">
-            {loading && !unsignedTx ? 'Building...' : 'Build & Preview'}
-          </button>
-          <button onClick={signAndSubmit} disabled={!unsignedTx || loading} className="w-full bg-violet-600 hover:bg-violet-700 text-white font-bold py-3 px-4 rounded-lg transition-colors disabled:bg-slate-800 disabled:text-slate-500">
-            {loading && unsignedTx ? 'Submitting...' : 'Sign & Submit'}
-          </button>
-          {error && <div className="text-red-400 text-sm text-center p-2 bg-red-900/50 rounded-md">{error}</div>}
-          {txHash && <div className="text-green-400 text-sm text-center p-2 bg-green-900/50 rounded-md">Success! Tx ID: <a href={`${CARDANOSCAN_BASE_URL}/transaction/${txHash}`} target="_blank" rel="noreferrer" className="underline font-mono text-xs break-all">{txHash}</a></div>}
-        </div>
+    )}
+    {!walletProps.connected && (
+      <div className="flex items-center gap-3 bg-slate-800 border border-slate-600 rounded-xl px-4 py-3 text-sm text-slate-300">
+        <Power size={16} className="text-violet-400 shrink-0" />
+        Connect your wallet from the sidebar to get started.
       </div>
-    </div>
-  );
-};
+    )}
+    {activeView === 'simple_transfer' && <SimpleTransferView {...walletProps} />}
+    {activeView === 'deploy_contract' && <DeployContractView {...walletProps} />}
+    {activeView === 'contract_simulator' && <ContractInteractionView {...walletProps} />}
+  </main>
+);
 
 // ==================================================================
-// Feature View: Contract Interaction
+// UI Helpers
 // ==================================================================
-type PlutusVersion = 'V1' | 'V2' | 'V3';
-
-const ContractInteractionView = ({ connected, wallet, address, updateWalletState }: WalletProps) => {
-  const [scriptAddress, setScriptAddress] = useState('');
-  const [scriptUtxos, setScriptUtxos] = useState<BlockfrostUtxo[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
-  const [fetchError, setFetchError] = useState<string | null>(null);
-  const [actionError, setActionError] = useState<string | null>(null);
-
-  const [selectedScriptUtxo, setSelectedScriptUtxo] = useState<BlockfrostUtxo | null>(null);
-  const [detailUtxo, setDetailUtxo] = useState<BlockfrostUtxo | null>(null);
-
-  const [datum, setDatum] = useState('');
-  const [redeemer, setRedeemer] = useState('');
-  const [scriptCbor, setScriptCbor] = useState('');
-  const [scriptVersion, setScriptVersion] = useState<PlutusVersion>('V3');
-
-  const [isSimulating, setIsSimulating] = useState(false);
-  const [simulationResult, setSimulationResult] = useState<SimResult | null>(null);
-
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [txHash, setTxHash] = useState<string | null>(null);
-
-  const fetchScriptUtxos = async () => {
-    if (!scriptAddress) return;
-    setIsLoading(true);
-    setFetchError(null);
-    setScriptUtxos([]);
-    try {
-      const response = await fetch(
-        `${BLOCKFROST_BASE_URL}/addresses/${scriptAddress}/utxos`,
-        { headers: { project_id: BLOCKFROST_API_KEY } }
-      );
-      if (!response.ok) throw new Error('Failed to fetch UTxOs.');
-      const data: BlockfrostUtxo[] = await response.json();
-      setScriptUtxos(data);
-    } catch (err: unknown) {
-      setFetchError(err instanceof Error ? err.message : 'Failed to fetch UTxOs.');
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    if (selectedScriptUtxo?.inline_datum) {
-      try {
-        const plutusData = PlutusData.from_hex(selectedScriptUtxo.inline_datum);
-        const datumJson = JSON.parse(plutusData.to_json(PlutusDatumSchema.DetailedSchema));
-        setDatum(JSON.stringify(datumJson, null, 2));
-      } catch {
-        setDatum('// Failed to decode datum CBOR.');
-      }
-    } else {
-      setDatum('');
-    }
-  }, [selectedScriptUtxo]);
-
-  // Builds the redeem transaction using MeshTxBuilder (canonical MeshJS pattern).
-  // Returns the unsigned tx as a CBOR hex string.
-  async function buildRedeemTx(): Promise<string> {
-    if (!wallet || !selectedScriptUtxo || !address) {
-      throw new Error('Wallet not connected or no UTxO selected.');
-    }
-
-    let redeemerJson: object;
-    try {
-      redeemerJson = JSON.parse(redeemer);
-    } catch {
-      throw new Error('Redeemer is not valid JSON. Expected Cardano DetailedSchema, e.g. { "constructor": 0, "fields": [] }');
-    }
-
-    const walletUtxos = await wallet.getUtxos();
-
-    const collateralUtxos = await wallet.getCollateral();
-    if (!collateralUtxos || collateralUtxos.length === 0) {
-      throw new Error('No collateral UTxO found. Please set collateral in your wallet (Settings → Collateral). It must be a pure-ADA UTxO of at least 5 ADA.');
-    }
-    const collateral = collateralUtxos[0];
-
-    const provider = new BlockfrostProvider(BLOCKFROST_API_KEY);
-    const txBuilder = new MeshTxBuilder({
-      fetcher: provider,
-      submitter: provider,
-      evaluator: provider,
-    });
-
-    const inputAmount = selectedScriptUtxo.amount.map(a => ({ unit: a.unit, quantity: a.quantity }));
-
-    txBuilder
-      .spendingPlutusScript(scriptVersion)
-      .txIn(
-        selectedScriptUtxo.tx_hash,
-        selectedScriptUtxo.output_index,
-        inputAmount,
-        scriptAddress,
-      )
-      .txInScript(scriptCbor);
-
-    if (selectedScriptUtxo.inline_datum) {
-      txBuilder.txInInlineDatumPresent();
-    } else {
-      let datumJson: object;
-      try {
-        datumJson = JSON.parse(datum);
-      } catch {
-        throw new Error('Datum is not valid JSON. It is required when the UTxO has no inline datum.');
-      }
-      txBuilder.txInDatumValue(datumJson, 'JSON');
-    }
-
-    txBuilder
-      .txInRedeemerValue(redeemerJson, 'JSON')
-      .changeAddress(address)
-      .selectUtxosFrom(walletUtxos)
-      .txInCollateral(
-        collateral.input.txHash,
-        collateral.input.outputIndex,
-        collateral.output.amount,
-        collateral.output.address,
-      );
-
-    await txBuilder.complete();
-    return txBuilder.txHex;
-  }
-
-  async function handleSimulate() {
-    if (!wallet || !selectedScriptUtxo) return;
-    setIsSimulating(true);
-    setActionError(null);
-    setSimulationResult(null);
-
-    try {
-      const unsignedTxHex = await buildRedeemTx();
-
-      // Blockfrost evaluate endpoint expects raw CBOR bytes, not a hex string
-      const txBytes = Uint8Array.from(Buffer.from(unsignedTxHex, 'hex'));
-
-      const response = await fetch(
-        `${BLOCKFROST_BASE_URL}/utils/txs/evaluate`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/cbor',
-            'project_id': BLOCKFROST_API_KEY,
-          },
-          body: txBytes,
-        }
-      );
-
-      const result = await response.json();
-      if (!response.ok) {
-        throw new Error(result.message || 'Simulation request failed.');
-      }
-
-      setSimulationResult({
-        isSuccess: true,
-        evaluationResult: result.EvaluationResult,
-      });
-
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Simulation failed.';
-      setActionError(message);
-      setSimulationResult({ isSuccess: false, reason: message });
-    } finally {
-      setIsSimulating(false);
-    }
-  }
-
-  async function handleBuildAndSubmit() {
-    if (!wallet || !selectedScriptUtxo) return;
-    setIsSubmitting(true);
-    setActionError(null);
-    setTxHash(null);
-
-    try {
-      const unsignedTxHex = await buildRedeemTx();
-      // partialSign=true is required for Plutus script transactions
-      const signedTx = await wallet.signTx(unsignedTxHex, true);
-      const hash = await wallet.submitTx(signedTx);
-
-      setTxHash(hash);
-      setSelectedScriptUtxo(null);
-      setScriptUtxos([]);
-      updateWalletState();
-
-    } catch (err: unknown) {
-      setActionError(err instanceof Error ? err.message : 'Transaction failed.');
-    } finally {
-      setIsSubmitting(false);
-    }
-  }
-
-  const isStepsLocked = !selectedScriptUtxo;
-
-  return (
-    <div className="space-y-6">
-      <div className="bg-slate-900 border border-slate-700 rounded-2xl p-8">
-        <h2 className="text-2xl font-bold mb-6">Step 1: Target Contract & UTxO</h2>
-        <div className="space-y-4">
-          <FormInput label="Script Address" placeholder="addr_test1w..." value={scriptAddress} onChange={setScriptAddress} />
-          <button onClick={fetchScriptUtxos} disabled={isLoading || !connected} className="w-full bg-slate-700 hover:bg-slate-600 text-white font-bold py-2 px-4 rounded-lg transition-colors disabled:bg-slate-800 disabled:text-slate-500">
-            {isLoading ? 'Fetching...' : 'Fetch Locked UTxOs'}
-          </button>
-          <div className="mt-4">
-            <h3 className="text-lg font-semibold text-slate-300">Locked UTxOs</h3>
-            <div className="space-y-2 max-h-60 overflow-y-auto mt-2 pr-2 border-t border-slate-700 pt-4">
-              {!isLoading && scriptUtxos.length === 0 && scriptAddress && !fetchError && (
-                <p className="text-sm text-slate-500 text-center py-4">No UTxOs found at this address.</p>
-              )}
-              {scriptUtxos.map((utxo, i) => (
-                <div
-                  key={i}
-                  onClick={() => setSelectedScriptUtxo(utxo)}
-                  className={`p-3 rounded-lg border text-sm cursor-pointer transition-all ${
-                    selectedScriptUtxo?.tx_hash === utxo.tx_hash && selectedScriptUtxo?.output_index === utxo.output_index
-                    ? 'bg-violet-900/50 border-violet-500'
-                    : 'bg-slate-800 border-slate-700 hover:border-violet-600'
-                  }`}
-                >
-                  <div className="flex justify-between items-start">
-                    <div>
-                      <p className="font-bold">{(parseInt(utxo.amount.find(a => a.unit === 'lovelace')?.quantity || '0') / 1000000)} ADA</p>
-                      <p className="text-xs text-slate-400 truncate">Hash: {utxo.tx_hash}</p>
-                      {(utxo.data_hash || utxo.inline_datum) && <p className="text-xs text-amber-400">Datum Present</p>}
-                    </div>
-                    <button
-                      onClick={(e) => { e.stopPropagation(); setDetailUtxo(utxo); }}
-                      className="text-xs text-slate-500 hover:text-slate-300 shrink-0 ml-2 mt-1"
-                    >
-                      Details
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-        {fetchError && <div className="mt-4 text-red-400 text-sm">{fetchError}</div>}
-      </div>
-
-      <div className={`bg-slate-900 border border-slate-700 rounded-2xl p-8 transition-opacity relative ${isStepsLocked ? 'opacity-40 pointer-events-none' : ''}`}>
-        {isStepsLocked && (
-          <div className="absolute inset-0 flex items-center justify-center z-10 rounded-2xl">
-            <p className="text-slate-400 text-sm bg-slate-900/90 px-4 py-2 rounded-lg border border-slate-700">Select a UTxO in Step 1 to continue</p>
-          </div>
-        )}
-        <h2 className="text-2xl font-bold mb-6">Step 2: Interaction Data</h2>
-        <div className="space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-slate-300 mb-1">Plutus Script Version</label>
-            <div className="flex gap-2">
-              {(['V1', 'V2', 'V3'] as PlutusVersion[]).map(v => (
-                <button
-                  key={v}
-                  onClick={() => setScriptVersion(v)}
-                  className={`px-4 py-2 rounded-lg text-sm font-bold transition-colors ${scriptVersion === v ? 'bg-violet-600 text-white' : 'bg-slate-800 text-slate-400 hover:bg-slate-700'}`}
-                >
-                  {v}
-                </button>
-              ))}
-            </div>
-            <p className="text-xs text-slate-500 mt-1">Aiken compiles to V3 by default. PlutusTx legacy contracts are typically V2.</p>
-          </div>
-          <FormTextarea label={selectedScriptUtxo?.inline_datum ? 'Datum (decoded from inline datum)' : 'Datum (JSON — required if no inline datum)'} value={datum} onChange={setDatum} placeholder='{ "constructor": 0, "fields": [] }' />
-          <FormTextarea label="Redeemer (JSON — Cardano DetailedSchema)" value={redeemer} onChange={setRedeemer} placeholder='{ "constructor": 0, "fields": [] }' />
-          <FormTextarea label="Script CBOR Hex" value={scriptCbor} onChange={setScriptCbor} placeholder='58... (from your plutus.json or aiken blueprint)' />
-        </div>
-      </div>
-
-      <div className={`bg-slate-900 border border-slate-700 rounded-2xl p-8 transition-opacity relative ${isStepsLocked ? 'opacity-40 pointer-events-none' : ''}`}>
-        <h2 className="text-2xl font-bold mb-6">Step 3: Actions</h2>
-        <div className="space-y-4">
-          <button onClick={handleSimulate} disabled={isSimulating || !connected || !selectedScriptUtxo || !scriptCbor.trim()} className="w-full bg-slate-700 hover:bg-slate-600 text-white font-bold py-3 px-4 rounded-lg transition-colors disabled:bg-slate-800 disabled:text-slate-500 flex items-center justify-center gap-2">
-            {isSimulating ? (
-              <>
-                <Loader2 size={16} className="animate-spin" />
-                Simulating...
-              </>
-            ) : 'Simulate Transaction'}
-          </button>
-          <button
-            onClick={handleBuildAndSubmit}
-            disabled={isSubmitting || !connected || !selectedScriptUtxo || !redeemer.trim() || !scriptCbor.trim()}
-            className="w-full bg-violet-600 hover:bg-violet-700 text-white font-bold py-3 px-4 rounded-lg transition-colors disabled:bg-slate-800 disabled:text-slate-500"
-          >
-            {isSubmitting ? 'Submitting...' : 'Build & Submit'}
-          </button>
-        </div>
-        <SimulationResult result={simulationResult} />
-        {actionError && <div className="mt-4 text-red-400 text-sm">{actionError}</div>}
-        {txHash && (
-          <div className="mt-4 text-green-400 text-sm text-center p-2 bg-green-900/50 rounded-md">
-            Success! Tx ID: <a href={`${CARDANOSCAN_BASE_URL}/transaction/${txHash}`} target="_blank" rel="noreferrer" className="underline font-mono text-xs break-all">{txHash}</a>
-          </div>
-        )}
-      </div>
-
-      {detailUtxo && <UTxODetailModal utxo={detailUtxo} onClose={() => setDetailUtxo(null)} />}
-    </div>
-  );
-};
-
-// ==================================================================
-// UI Helper Sub-Components
-// ==================================================================
-interface NavItemProps {
-  icon: React.ReactNode;
-  label: string;
-  isActive: boolean;
-  onClick: () => void;
-}
-
-const NavItem = ({ icon, label, isActive, onClick }: NavItemProps) => (
+const NavItem = ({ icon, label, isActive, onClick }: { icon: React.ReactNode; label: string; isActive: boolean; onClick: () => void }) => (
   <button onClick={onClick} className={`w-full flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium transition-colors ${isActive ? 'bg-violet-600 text-white' : 'text-slate-300 hover:bg-slate-800'}`}>
     {icon}
     <span>{label}</span>
@@ -651,19 +211,10 @@ const NavItem = ({ icon, label, isActive, onClick }: NavItemProps) => (
   </button>
 );
 
-interface CustomWalletConnectorProps {
-  onConnect: (name: string) => void;
-  connected: boolean;
-  onDisconnect: () => void;
-}
-
-const CustomWalletConnector = ({ onConnect, connected, onDisconnect }: CustomWalletConnectorProps) => {
+const CustomWalletConnector = ({ onConnect, connected, onDisconnect }: { onConnect: (name: string) => void; connected: boolean; onDisconnect: () => void }) => {
   const wallets = useWalletList();
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const handleConnect = (walletName: string) => {
-    onConnect(walletName);
-    setIsModalOpen(false);
-  };
+  const handleConnect = (walletName: string) => { onConnect(walletName); setIsModalOpen(false); };
   return (
     <>
       {connected
@@ -687,60 +238,11 @@ const CustomWalletConnector = ({ onConnect, connected, onDisconnect }: CustomWal
   );
 };
 
-interface SummaryRowProps {
-  label: string;
-  value: string;
-}
-
-const SummaryRow = ({ label, value }: SummaryRowProps) => (
-  <div className="flex justify-between items-center bg-slate-800 p-2 rounded-md">
-    <span className="text-slate-400">{label}</span>
-    <span className="font-mono font-bold">{value}</span>
-  </div>
-);
-
-interface CopyButtonProps {
-  textToCopy: string | undefined;
-}
-
-const CopyButton = ({ textToCopy }: CopyButtonProps) => {
-  const [copied, setCopied] = useState(false);
-  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  useEffect(() => {
-    return () => {
-      if (timeoutRef.current) clearTimeout(timeoutRef.current);
-    };
-  }, []);
-
-  const handleCopy = () => {
-    if (textToCopy) {
-      navigator.clipboard.writeText(textToCopy);
-      setCopied(true);
-      if (timeoutRef.current) clearTimeout(timeoutRef.current);
-      timeoutRef.current = setTimeout(() => setCopied(false), 2000);
-    }
-  };
-
-  return (
-    <button onClick={handleCopy} className="ml-2 text-slate-500 hover:text-slate-200">
-      {copied ? <Check size={16} className="text-green-400" /> : <Clipboard size={16} />}
-    </button>
-  );
-};
-
-interface InfoRowProps {
-  label: string;
-  value: string;
-  fullValue?: string;
-  isMono?: boolean;
-}
-
-const InfoRow = ({ label, value, fullValue, isMono = true }: InfoRowProps) => (
+const InfoRow = ({ label, value, fullValue }: { label: string; value: string; fullValue?: string }) => (
   <div className="flex justify-between items-center">
     <span className="text-slate-400">{label}:</span>
     <div className="flex items-center">
-      <span className={`font-mono ${isMono ? 'truncate' : ''}`}>{value}</span>
+      <span className="font-mono truncate">{value}</span>
       <CopyButton textToCopy={fullValue || value} />
     </div>
   </div>
