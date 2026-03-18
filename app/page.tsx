@@ -1,10 +1,10 @@
 'use client';
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react'; // useRef kept for CopyButton timeout
 import { useWallet, useWalletList, useNetwork } from '@meshsdk/react';
 import { Transaction, UTxO, MeshTxBuilder, BlockfrostProvider } from '@meshsdk/core';
 import { PlutusData, PlutusDatumSchema } from '@emurgo/cardano-serialization-lib-asmjs';
-import { Sparkles, ArrowRight, Power, ChevronsRight, FileJson, Send, Search, Clipboard, Check, Loader2 } from 'lucide-react';
+import { Sparkles, Power, ChevronsRight, FileJson, Send, Search, Clipboard, Check, Loader2 } from 'lucide-react';
 import UTXOSelector from '../components/UTXOSelector';
 import UTxODetailModal from '../components/UTxODetailModal';
 import SimulationResult, { SimResult } from '../components/SimulationResult';
@@ -54,35 +54,18 @@ interface WalletProps {
   selectedUtxos: UTxO[];
 }
 
-// Main Page Component (Landing Page)
+// Main Page Component
 export default function Home() {
-  const suiteRef = useRef<HTMLDivElement>(null);
-  const handleScrollToSuite = () => suiteRef.current?.scrollIntoView({ behavior: 'smooth' });
-
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100">
       <header className="fixed top-0 left-0 right-0 bg-slate-900/80 backdrop-blur-md z-50 border-b border-slate-700">
-        <div className="container mx-auto px-6 py-3 flex justify-between items-center">
-          <div className="flex items-center gap-2">
-            <Sparkles className="text-violet-400" />
-            <h1 className="text-xl font-bold">Cardano Dev Suite</h1>
-          </div>
-          <button onClick={handleScrollToSuite} className="bg-violet-600 hover:bg-violet-700 text-white font-bold py-2 px-4 rounded-lg transition-colors">
-            Launch Suite
-          </button>
+        <div className="container mx-auto px-6 py-3 flex items-center gap-2">
+          <Sparkles className="text-violet-400" />
+          <h1 className="text-xl font-bold">Cardano Dev Suite</h1>
         </div>
       </header>
-      <main className="container mx-auto px-6 pt-32 text-center">
-        <h2 className="text-5xl font-extrabold leading-tight mb-4">The Smartest Way to Build on Cardano</h2>
-        <p className="text-lg text-slate-400 max-w-2xl mx-auto mb-8">
-          An all-in-one toolkit to accelerate your development workflow. Build, test, and debug transactions with unprecedented speed and clarity.
-        </p>
-        <button onClick={handleScrollToSuite} className="bg-white text-slate-900 font-bold py-3 px-6 rounded-lg hover:bg-slate-200 transition-colors flex items-center gap-2 mx-auto">
-          Start Building <ArrowRight size={20} />
-        </button>
-      </main>
-      <div ref={suiteRef} className="bg-black py-20 mt-16">
-        <div className="container mx-auto px-6">
+      <div className="bg-black pt-16 min-h-screen">
+        <div className="container mx-auto px-6 py-8">
           <DeveloperSuite />
         </div>
       </div>
@@ -182,8 +165,8 @@ const Sidebar = ({ activeView, onNavigate, walletState, utxos, selectedUtxos, on
             </div>
             <InfoRow
               label="Balance"
-              value={`${(parseInt(adaBalance) / 1000000).toFixed(6)} ADA`}
-              fullValue={(parseInt(adaBalance) / 1000000).toString()}
+              value={`${(parseInt(adaBalance) / 1000000).toFixed(2)} ADA`}
+              fullValue={(parseInt(adaBalance) / 1000000).toFixed(6)}
             />
             <InfoRow
               label="Address"
@@ -204,9 +187,11 @@ const Sidebar = ({ activeView, onNavigate, walletState, utxos, selectedUtxos, on
           <NavItem icon={<FileJson size={18} />} label="Contract Simulator" isActive={activeView === 'contract_simulator'} onClick={() => onNavigate('contract_simulator')} />
         </nav>
       </div>
-      <div className="bg-slate-900 border border-slate-700 rounded-2xl p-6 sticky top-96">
-        <UTXOSelector utxos={utxos} selectedUtxos={selectedUtxos} onSelectionChange={onSelectionChange} disabled={!connected} />
-      </div>
+      {activeView === 'simple_transfer' && (
+        <div className="bg-slate-900 border border-slate-700 rounded-2xl p-6 sticky top-96">
+          <UTXOSelector utxos={utxos} selectedUtxos={selectedUtxos} onSelectionChange={onSelectionChange} disabled={!connected} />
+        </div>
+      )}
     </aside>
   );
 };
@@ -219,6 +204,12 @@ interface MainContentProps {
 const MainContent = ({ activeView, walletProps }: MainContentProps) => {
   return (
     <main className="flex-1">
+      {!walletProps.connected && (
+        <div className="mb-4 flex items-center gap-3 bg-slate-800 border border-slate-600 rounded-xl px-4 py-3 text-sm text-slate-300">
+          <Power size={16} className="text-violet-400 shrink-0" />
+          Connect your wallet from the sidebar to get started.
+        </div>
+      )}
       {activeView === 'simple_transfer' && <SimpleTransferView {...walletProps} />}
       {activeView === 'deploy_contract' && <DeployContractView {...walletProps} />}
       {activeView === 'contract_simulator' && <ContractInteractionView {...walletProps} />}
@@ -314,8 +305,11 @@ const SimpleTransferView = ({ connected, wallet, address, updateWalletState, sel
             <SummaryRow label="Calculated Fee:" value={summary ? `${parseInt(summary.fee) / 1000000} ADA` : '-'} />
             <SummaryRow label="Change Output:" value={summary ? `${parseInt(summary.change) / 1000000} ADA` : '-'} />
             <div className="pt-2">
-              <label className="block text-sm font-medium text-slate-300">Transaction CBOR</label>
-              <textarea readOnly value={summary ? summary.cbor : ''} className="mt-1 w-full h-24 bg-slate-950 text-xs p-2 rounded-md font-mono break-all resize-none border border-slate-700"></textarea>
+              <div className="flex items-center justify-between mb-1">
+                <label className="block text-sm font-medium text-slate-300">Transaction CBOR</label>
+                {summary && <CopyButton textToCopy={summary.cbor} />}
+              </div>
+              <textarea readOnly value={summary ? summary.cbor : ''} className="w-full h-24 bg-slate-950 text-xs p-2 rounded-md font-mono break-all resize-none border border-slate-700"></textarea>
             </div>
           </div>
         </div>
@@ -352,7 +346,7 @@ const ContractInteractionView = ({ connected, wallet, address, updateWalletState
   const [datum, setDatum] = useState('');
   const [redeemer, setRedeemer] = useState('');
   const [scriptCbor, setScriptCbor] = useState('');
-  const [scriptVersion, setScriptVersion] = useState<PlutusVersion>('V2');
+  const [scriptVersion, setScriptVersion] = useState<PlutusVersion>('V3');
 
   const [isSimulating, setIsSimulating] = useState(false);
   const [simulationResult, setSimulationResult] = useState<SimResult | null>(null);
@@ -543,6 +537,9 @@ const ContractInteractionView = ({ connected, wallet, address, updateWalletState
           <div className="mt-4">
             <h3 className="text-lg font-semibold text-slate-300">Locked UTxOs</h3>
             <div className="space-y-2 max-h-60 overflow-y-auto mt-2 pr-2 border-t border-slate-700 pt-4">
+              {!isLoading && scriptUtxos.length === 0 && scriptAddress && !fetchError && (
+                <p className="text-sm text-slate-500 text-center py-4">No UTxOs found at this address.</p>
+              )}
               {scriptUtxos.map((utxo, i) => (
                 <div
                   key={i}
@@ -574,7 +571,12 @@ const ContractInteractionView = ({ connected, wallet, address, updateWalletState
         {fetchError && <div className="mt-4 text-red-400 text-sm">{fetchError}</div>}
       </div>
 
-      <div className={`bg-slate-900 border border-slate-700 rounded-2xl p-8 transition-opacity ${isStepsLocked ? 'opacity-40 pointer-events-none' : ''}`}>
+      <div className={`bg-slate-900 border border-slate-700 rounded-2xl p-8 transition-opacity relative ${isStepsLocked ? 'opacity-40 pointer-events-none' : ''}`}>
+        {isStepsLocked && (
+          <div className="absolute inset-0 flex items-center justify-center z-10 rounded-2xl">
+            <p className="text-slate-400 text-sm bg-slate-900/90 px-4 py-2 rounded-lg border border-slate-700">Select a UTxO in Step 1 to continue</p>
+          </div>
+        )}
         <h2 className="text-2xl font-bold mb-6">Step 2: Interaction Data</h2>
         <div className="space-y-4">
           <div>
@@ -598,7 +600,7 @@ const ContractInteractionView = ({ connected, wallet, address, updateWalletState
         </div>
       </div>
 
-      <div className={`bg-slate-900 border border-slate-700 rounded-2xl p-8 transition-opacity ${isStepsLocked ? 'opacity-40 pointer-events-none' : ''}`}>
+      <div className={`bg-slate-900 border border-slate-700 rounded-2xl p-8 transition-opacity relative ${isStepsLocked ? 'opacity-40 pointer-events-none' : ''}`}>
         <h2 className="text-2xl font-bold mb-6">Step 3: Actions</h2>
         <div className="space-y-4">
           <button onClick={handleSimulate} disabled={isSimulating || !connected || !selectedScriptUtxo || !scriptCbor.trim()} className="w-full bg-slate-700 hover:bg-slate-600 text-white font-bold py-3 px-4 rounded-lg transition-colors disabled:bg-slate-800 disabled:text-slate-500 flex items-center justify-center gap-2">
