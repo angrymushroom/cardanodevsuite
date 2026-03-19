@@ -4,11 +4,16 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { useWallet, useWalletList, useNetwork } from '@meshsdk/react';
 import { Transaction, UTxO, MeshTxBuilder, BlockfrostProvider } from '@meshsdk/core';
 import { PlutusData, PlutusDatumSchema } from '@emurgo/cardano-serialization-lib-asmjs';
-import { Sparkles, ArrowRight, Power, ChevronsRight, FileJson, Send, Search, Clipboard, Check, Loader2 } from 'lucide-react';
+import { Sparkles, ArrowRight, Power, ChevronsRight, FileJson, Send, Search, Clipboard, Check, Loader2, Hash, ScanSearch, Binary, Coins, Code2 } from 'lucide-react';
 import UTXOSelector from '../components/UTXOSelector';
 import UTxODetailModal from '../components/UTxODetailModal';
 import SimulationResult, { SimResult } from '../components/SimulationResult';
 import DeployContractView from '../components/DeployContractView';
+import AddressAnalyzerView from '../components/AddressAnalyzerView';
+import ScriptHashView from '../components/ScriptHashView';
+import CborInspectorView from '../components/CborInspectorView';
+import TokenMintView from '../components/TokenMintView';
+import TxDecoderView from '../components/TxDecoderView';
 import { FormInput, FormTextarea } from '../components/Form';
 import { getNetworkConfig } from '../lib/networkConfig';
 
@@ -196,10 +201,18 @@ const Sidebar = ({ activeView, onNavigate, walletState, utxos, selectedUtxos, on
           </div>
         )}
         <nav className="space-y-2">
-          <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Tools</h3>
+          <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Transaction Tools</h3>
           <NavItem icon={<Send size={18} />} label="Simple Transfer" isActive={activeView === 'simple_transfer'} onClick={() => onNavigate('simple_transfer')} />
           <NavItem icon={<Search size={18} />} label="Deploy Contract" isActive={activeView === 'deploy_contract'} onClick={() => onNavigate('deploy_contract')} />
           <NavItem icon={<FileJson size={18} />} label="Contract Simulator" isActive={activeView === 'contract_simulator'} onClick={() => onNavigate('contract_simulator')} />
+          <NavItem icon={<Coins size={18} />} label="Mint Token / NFT" isActive={activeView === 'token_mint'} onClick={() => onNavigate('token_mint')} />
+        </nav>
+        <nav className="space-y-2 mt-4">
+          <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Utilities</h3>
+          <NavItem icon={<ScanSearch size={18} />} label="Address Analyzer" isActive={activeView === 'address_analyzer'} onClick={() => onNavigate('address_analyzer')} />
+          <NavItem icon={<Hash size={18} />} label="Script Hash Calc" isActive={activeView === 'script_hash'} onClick={() => onNavigate('script_hash')} />
+          <NavItem icon={<Binary size={18} />} label="CBOR Inspector" isActive={activeView === 'cbor_inspector'} onClick={() => onNavigate('cbor_inspector')} />
+          <NavItem icon={<Code2 size={18} />} label="Tx Decoder" isActive={activeView === 'tx_decoder'} onClick={() => onNavigate('tx_decoder')} />
         </nav>
       </div>
       <div className="bg-slate-900 border border-slate-700 rounded-2xl p-6 sticky top-96">
@@ -220,6 +233,17 @@ const MainContent = ({ activeView, walletProps }: MainContentProps) => {
       {activeView === 'simple_transfer' && <SimpleTransferView {...walletProps} />}
       {activeView === 'deploy_contract' && <DeployContractView {...walletProps} />}
       {activeView === 'contract_simulator' && <ContractInteractionView {...walletProps} />}
+      {activeView === 'token_mint' && (
+        <TokenMintView
+          connected={walletProps.connected}
+          updateWalletState={walletProps.updateWalletState}
+          network={walletProps.network}
+        />
+      )}
+      {activeView === 'address_analyzer' && <AddressAnalyzerView />}
+      {activeView === 'script_hash' && <ScriptHashView />}
+      {activeView === 'cbor_inspector' && <CborInspectorView />}
+      {activeView === 'tx_decoder' && <TxDecoderView />}
     </main>
   );
 };
