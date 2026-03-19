@@ -10,10 +10,7 @@ import UTxODetailModal from '../components/UTxODetailModal';
 import SimulationResult, { SimResult } from '../components/SimulationResult';
 import DeployContractView from '../components/DeployContractView';
 import { FormInput, FormTextarea } from '../components/Form';
-
-const BLOCKFROST_API_KEY = process.env.NEXT_PUBLIC_BLOCKFROST_API_KEY ?? '';
-const BLOCKFROST_BASE_URL = process.env.NEXT_PUBLIC_BLOCKFROST_BASE_URL ?? 'https://cardano-preprod.blockfrost.io/api/v0';
-const CARDANOSCAN_BASE_URL = process.env.NEXT_PUBLIC_CARDANOSCAN_BASE_URL ?? 'https://preprod.cardanoscan.io';
+import { getNetworkConfig } from '../lib/networkConfig';
 
 // Blockfrost UTxO shape returned from the REST API
 interface BlockfrostAmount {
@@ -52,6 +49,7 @@ interface WalletProps {
   address: string | undefined;
   updateWalletState: () => void;
   selectedUtxos: UTxO[];
+  network: number | undefined;
 }
 
 // Main Page Component (Landing Page)
@@ -143,7 +141,7 @@ const DeveloperSuite = () => {
       />
       <MainContent
         activeView={activeView}
-        walletProps={{ connected, wallet, address, updateWalletState, selectedUtxos }}
+        walletProps={{ connected, wallet, address, updateWalletState, selectedUtxos, network }}
       />
     </div>
   );
@@ -229,7 +227,8 @@ const MainContent = ({ activeView, walletProps }: MainContentProps) => {
 // ==================================================================
 // Feature View: Simple Transfer
 // ==================================================================
-const SimpleTransferView = ({ connected, wallet, address, updateWalletState, selectedUtxos }: WalletProps) => {
+const SimpleTransferView = ({ connected, wallet, address, updateWalletState, selectedUtxos, network }: WalletProps) => {
+  const { cardanoscanBaseUrl } = getNetworkConfig(network);
   const [loading, setLoading]       = useState(false);
   const [txHash, setTxHash]         = useState<string | null>(null);
   const [error, setError]           = useState<string | null>(null);
@@ -327,7 +326,7 @@ const SimpleTransferView = ({ connected, wallet, address, updateWalletState, sel
             {loading && unsignedTx ? 'Submitting...' : 'Sign & Submit'}
           </button>
           {error && <div className="text-red-400 text-sm text-center p-2 bg-red-900/50 rounded-md">{error}</div>}
-          {txHash && <div className="text-green-400 text-sm text-center p-2 bg-green-900/50 rounded-md">Success! Tx ID: <a href={`${CARDANOSCAN_BASE_URL}/transaction/${txHash}`} target="_blank" rel="noreferrer" className="underline font-mono text-xs break-all">{txHash}</a></div>}
+          {txHash && <div className="text-green-400 text-sm text-center p-2 bg-green-900/50 rounded-md">Success! Tx ID: <a href={`${cardanoscanBaseUrl}/transaction/${txHash}`} target="_blank" rel="noreferrer" className="underline font-mono text-xs break-all">{txHash}</a></div>}
         </div>
       </div>
     </div>
@@ -339,7 +338,8 @@ const SimpleTransferView = ({ connected, wallet, address, updateWalletState, sel
 // ==================================================================
 type PlutusVersion = 'V1' | 'V2' | 'V3';
 
-const ContractInteractionView = ({ connected, wallet, address, updateWalletState }: WalletProps) => {
+const ContractInteractionView = ({ connected, wallet, address, updateWalletState, network }: WalletProps) => {
+  const { blockfrostApiKey, blockfrostBaseUrl, cardanoscanBaseUrl } = getNetworkConfig(network);
   const [scriptAddress, setScriptAddress] = useState('');
   const [scriptUtxos, setScriptUtxos] = useState<BlockfrostUtxo[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -367,8 +367,8 @@ const ContractInteractionView = ({ connected, wallet, address, updateWalletState
     setScriptUtxos([]);
     try {
       const response = await fetch(
-        `${BLOCKFROST_BASE_URL}/addresses/${scriptAddress}/utxos`,
-        { headers: { project_id: BLOCKFROST_API_KEY } }
+        `${blockfrostBaseUrl}/addresses/${scriptAddress}/utxos`,
+        { headers: { project_id: blockfrostApiKey } }
       );
       if (!response.ok) throw new Error('Failed to fetch UTxOs.');
       const data: BlockfrostUtxo[] = await response.json();
@@ -416,7 +416,7 @@ const ContractInteractionView = ({ connected, wallet, address, updateWalletState
     }
     const collateral = collateralUtxos[0];
 
-    const provider = new BlockfrostProvider(BLOCKFROST_API_KEY);
+    const provider = new BlockfrostProvider(blockfrostApiKey);
     const txBuilder = new MeshTxBuilder({
       fetcher: provider,
       submitter: provider,
@@ -475,12 +475,12 @@ const ContractInteractionView = ({ connected, wallet, address, updateWalletState
       const txBytes = Uint8Array.from(Buffer.from(unsignedTxHex, 'hex'));
 
       const response = await fetch(
-        `${BLOCKFROST_BASE_URL}/utils/txs/evaluate`,
+        `${blockfrostBaseUrl}/utils/txs/evaluate`,
         {
           method: 'POST',
           headers: {
             'Content-Type': 'application/cbor',
-            'project_id': BLOCKFROST_API_KEY,
+            'project_id': blockfrostApiKey,
           },
           body: txBytes,
         }
@@ -621,7 +621,7 @@ const ContractInteractionView = ({ connected, wallet, address, updateWalletState
         {actionError && <div className="mt-4 text-red-400 text-sm">{actionError}</div>}
         {txHash && (
           <div className="mt-4 text-green-400 text-sm text-center p-2 bg-green-900/50 rounded-md">
-            Success! Tx ID: <a href={`${CARDANOSCAN_BASE_URL}/transaction/${txHash}`} target="_blank" rel="noreferrer" className="underline font-mono text-xs break-all">{txHash}</a>
+            Success! Tx ID: <a href={`${cardanoscanBaseUrl}/transaction/${txHash}`} target="_blank" rel="noreferrer" className="underline font-mono text-xs break-all">{txHash}</a>
           </div>
         )}
       </div>

@@ -4,16 +4,16 @@ import { useState } from 'react';
 import { useWallet } from '@meshsdk/react';
 import { BlockfrostProvider, MeshTxBuilder } from '@meshsdk/core';
 import { FormInput, FormTextarea } from './Form';
-
-const BLOCKFROST_API_KEY = process.env.NEXT_PUBLIC_BLOCKFROST_API_KEY ?? '';
-const CARDANOSCAN_BASE_URL = process.env.NEXT_PUBLIC_CARDANOSCAN_BASE_URL ?? 'https://preprod.cardanoscan.io';
+import { getNetworkConfig } from '../lib/networkConfig';
 
 interface DeployContractViewProps {
   connected: boolean;
   updateWalletState: () => void;
+  network: number | undefined;
 }
 
-export default function DeployContractView({ connected, updateWalletState }: DeployContractViewProps) {
+export default function DeployContractView({ connected, updateWalletState, network }: DeployContractViewProps) {
+  const { blockfrostApiKey, cardanoscanBaseUrl } = getNetworkConfig(network);
   const { wallet } = useWallet();
   const [isLoading, setIsLoading] = useState(false);
   const [txHash, setTxHash] = useState<string | null>(null);
@@ -63,7 +63,7 @@ export default function DeployContractView({ connected, updateWalletState }: Dep
       const usedAddresses = await wallet.getUsedAddresses();
       const walletAddress = usedAddresses[0];
       const utxos = await wallet.getUtxos();
-      const provider = new BlockfrostProvider(BLOCKFROST_API_KEY);
+      const provider = new BlockfrostProvider(blockfrostApiKey);
 
       const meshTxBuilder = new MeshTxBuilder({
         fetcher: provider,
@@ -103,7 +103,7 @@ export default function DeployContractView({ connected, updateWalletState }: Dep
         {error && <div className="mt-4 text-red-400 text-sm text-center p-2 bg-red-900/50 rounded-md">{error}</div>}
         {txHash && (
           <div className="mt-4 text-green-400 text-sm text-center p-2 bg-green-900/50 rounded-md">
-            Success! Tx ID: <a href={`${CARDANOSCAN_BASE_URL}/transaction/${txHash}`} target="_blank" rel="noreferrer" className="underline font-mono text-xs break-all">{txHash}</a>
+            Success! Tx ID: <a href={`${cardanoscanBaseUrl}/transaction/${txHash}`} target="_blank" rel="noreferrer" className="underline font-mono text-xs break-all">{txHash}</a>
           </div>
         )}
       </div>
