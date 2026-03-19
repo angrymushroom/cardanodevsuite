@@ -3,6 +3,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import MeshProviderWrapper from "../components/MeshProviderWrapper";
+import FeedbackWidget from "../components/FeedbackWidget";
 
 export const metadata: Metadata = {
   title: "Cardano Developer Suite",
@@ -19,6 +20,7 @@ export default function RootLayout({
       <body>
         {/* Use the client component wrapper here */}
         <MeshProviderWrapper>{children}</MeshProviderWrapper>
+        <FeedbackWidget />
       </body>
     </html>
   );
