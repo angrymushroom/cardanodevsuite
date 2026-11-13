@@ -2,12 +2,13 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { BrowserWallet, Transaction, UTxO, resolvePaymentKeyHash } from '@meshsdk/core';
-import { Sparkles, ArrowRight, Power, ChevronsRight, FileJson, Send, Search, Clipboard, Activity, Braces } from 'lucide-react';
+import { Sparkles, ArrowRight, Power, ChevronsRight, FileJson, Send, Search, Activity, Braces } from 'lucide-react';
 import UTXOSelector from '../components/UTXOSelector';
 import DeployContractView from '../components/DeployContractView';
 import ContractInteractionView from '../components/ContractInteractionView';
 import TransactionWatch from '../components/TransactionWatch';
 import PlutusDataLab from '../components/PlutusDataLab';
+import CopyButton from '../components/CopyButton';
 import { adaToLovelace, assertAddressNetwork, explorerTxUrl, formatAda, walletNetwork, type TestnetNetwork } from '../lib/cardano';
 import { createKoiosProvider } from '../lib/provider';
 import { transactionErrorHint } from '../lib/transactionDiagnostics';
@@ -351,7 +352,7 @@ const SimpleTransferView = ({ connected, wallet, address, network, selectedUtxos
                   <SummaryRow label="Calculated Fee:" value={previewValid && summary?.fee ? `${formatAda(summary.fee)} ADA` : '-'} />
                   <SummaryRow label="Change Output:" value={previewValid && summary ? `${formatAda(summary.change)} ADA` : '-'} />
                   <div className="pt-2">
-                      <label className="block text-sm font-medium text-slate-300">Transaction CBOR</label>
+                      <div className="flex items-center justify-between"><label className="block text-sm font-medium text-slate-300">Transaction CBOR</label>{previewValid && summary && <CopyButton textToCopy={summary.cbor} />}</div>
                       <textarea readOnly value={previewValid && summary ? summary.cbor : ''} className="mt-1 w-full h-24 bg-slate-950 text-xs p-2 rounded-md font-mono break-all resize-none border border-slate-700"></textarea>
                   </div>
                 </div>
@@ -432,26 +433,6 @@ const SummaryRow = ({ label, value }) => (
         <span className="font-mono font-bold">{value}</span>
     </div>
 );
-
-// Add these to the bottom of page.tsx
-
-const CopyButton = ({ textToCopy }) => {
-    const [copied, setCopied] = useState(false);
-
-    const handleCopy = () => {
-        if (textToCopy) {
-            navigator.clipboard.writeText(textToCopy);
-            setCopied(true);
-            setTimeout(() => setCopied(false), 2000); // Reset icon after 2 seconds
-        }
-    };
-
-    return (
-        <button onClick={handleCopy} className="ml-2 text-slate-500 hover:text-slate-200">
-            {copied ? <ChevronsRight size={16} className="text-green-400" /> : <Clipboard size={16} />}
-        </button>
-    );
-};
 
 const InfoRow = ({ label, value, fullValue, isMono = true }) => (
     <div className="flex justify-between items-center">

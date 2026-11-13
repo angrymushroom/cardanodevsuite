@@ -7,7 +7,7 @@ A browser based transaction builder and script evaluator for Cardano.
 - Connect a CIP-30 wallet and inspect its address, payment key hash, balance, and UTxOs. The DRep public key is shown when the wallet supports CIP-95.
 - Build an ADA transfer, optionally choose inputs and attach metadata, inspect the fee, change and unsigned CBOR, then sign and submit with the wallet.
 - Lock ADA at a script address with an inline datum.
-- Fetch script UTxOs and evaluate a Plutus V2 or V3 script spend with a redeemer and collateral. Evaluation does **not** sign or submit the transaction.
+- Fetch script UTxOs, evaluate a Plutus V1, V2, or V3 spend with a redeemer and collateral, or build, sign, and submit it with the wallet. Evaluation alone does **not** submit a transaction.
 - Watch a submitted transaction until Koios indexes it, or paste any transaction hash to inspect confirmation, block, slot, fee, and size. Submission errors show recovery hints for common Cardano ledger rules.
 - Use Plutus Data Lab to convert detailed datum/redeemer JSON and CBOR, calculate the exact datum hash, and compare an expected hash. Contract views can send their datum to the lab.
 - Use mainnet, preprod, or preview. CIP-30 returns network ID `0` for both testnets, so select the testnet that matches your wallet. Transaction links follow that choice.
@@ -42,4 +42,4 @@ See [developer tool research](docs/developer-tool-research.md) for the demand si
 
 ## Cardano compatibility
 
-Cardano is in the Conway era. The [van Rossem upgrade](https://docs.cardano.org/about-cardano/evolution/upgrades/van-rossem) moved mainnet to protocol version 11 in July 2026 without changing the transaction format. This app supports Plutus V2 and V3 interactions and uses live chain parameters, so it does not pin protocol version 11 fee or cost values. Governance can change those values.
+Cardano is in the Conway era. The [van Rossem upgrade](https://docs.cardano.org/about-cardano/evolution/upgrades/van-rossem) moved mainnet to protocol version 11 in July 2026 without changing the transaction format. This app supports Plutus V1, V2, and V3 interactions and uses live chain parameters, so it does not pin protocol version 11 fee or cost values. Governance can change those values.
