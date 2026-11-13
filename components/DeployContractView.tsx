@@ -5,8 +5,9 @@ import { MeshTxBuilder } from '@meshsdk/core';
 import { FormInput, FormTextarea } from './Form';
 import { adaToLovelace, assertAddressNetwork, explorerTxUrl, type CardanoNetwork } from '../lib/cardano';
 import { createKoiosProvider } from '../lib/provider';
+import { transactionErrorHint } from '../lib/transactionDiagnostics';
 
-export default function DeployContractView({ connected, wallet, network, updateWalletState }: { connected: boolean; wallet: any; network: CardanoNetwork; updateWalletState?: () => Promise<void> }) {
+export default function DeployContractView({ connected, wallet, network, onSubmitted }: { connected: boolean; wallet: any; network: CardanoNetwork; onSubmitted?: (hash: string, network: CardanoNetwork) => void }) {
   const [isLoading, setIsLoading] = useState(false);
   const [txHash, setTxHash] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -55,7 +56,7 @@ export default function DeployContractView({ connected, wallet, network, updateW
       const hash = await wallet.submitTx(signedTx);
 
       setTxHash(hash);
-      await updateWalletState?.();
+      onSubmitted?.(hash, network);
 
     } catch (err: any) {
       setError(err.message || 'Deployment failed. Ensure collateral is set.');
@@ -74,7 +75,7 @@ export default function DeployContractView({ connected, wallet, network, updateW
         <button onClick={handleDeploy} disabled={isLoading || !connected} className="w-full bg-violet-600 hover:bg-violet-700 text-white font-bold py-3 px-4 rounded-lg transition-colors disabled:bg-slate-800 disabled:text-slate-500">
           {isLoading ? 'Deploying...' : 'Deploy & Lock Funds'}
         </button>
-        {error && <div className="mt-4 text-red-400 text-sm text-center p-2 bg-red-900/50 rounded-md">{error}</div>}
+        {error && <div className="mt-4 text-red-400 text-sm p-3 bg-red-900/50 rounded-md"><p>{error}</p>{transactionErrorHint(error) && <p className="mt-2 text-amber-200">{transactionErrorHint(error)}</p>}</div>}
         {txHash && (
           <div className="mt-4 text-green-400 text-sm text-center p-2 bg-green-900/50 rounded-md">
             Success! Tx ID: <a href={explorerTxUrl(network, txHash)} target="_blank" rel="noreferrer" className="underline font-mono text-xs break-all">{txHash}</a>

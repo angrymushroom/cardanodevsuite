@@ -2,12 +2,14 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { BrowserWallet, Transaction, UTxO, resolvePaymentKeyHash } from '@meshsdk/core';
-import { Sparkles, ArrowRight, Power, ChevronsRight, FileJson, Send, Search, Clipboard } from 'lucide-react';
+import { Sparkles, ArrowRight, Power, ChevronsRight, FileJson, Send, Search, Clipboard, Activity } from 'lucide-react';
 import UTXOSelector from '../components/UTXOSelector';
 import DeployContractView from '../components/DeployContractView';
 import ContractInteractionView from '../components/ContractInteractionView';
+import TransactionWatch from '../components/TransactionWatch';
 import { adaToLovelace, assertAddressNetwork, explorerTxUrl, formatAda, walletNetwork, type TestnetNetwork } from '../lib/cardano';
 import { createKoiosProvider } from '../lib/provider';
+import { transactionErrorHint } from '../lib/transactionDiagnostics';
 
 // Main Page Component (Landing Page)
 export default function Home() {
@@ -50,6 +52,7 @@ export default function Home() {
 // ==================================================================
 const DeveloperSuite = () => {
   const [activeView, setActiveView] = useState('simple_transfer');
+  const [watchRequest, setWatchRequest] = useState<{ hash: string; network: ReturnType<typeof walletNetwork> } | null>(null);
   const [wallet, setWallet] = useState<BrowserWallet | null>(null);
   const [networkId, setNetworkId] = useState<number | undefined>();
   const connected = wallet !== null;
@@ -65,6 +68,10 @@ const DeveloperSuite = () => {
   const disconnect = () => { setWallet(null); setNetworkId(undefined); };
   const [testnet, setTestnet] = useState<TestnetNetwork>('preprod');
   const network = walletNetwork(networkId, testnet);
+  const onSubmitted = (hash: string, submittedNetwork: ReturnType<typeof walletNetwork>) => {
+    setWatchRequest({ hash, network: submittedNetwork });
+    setActiveView('transaction_watch');
+  };
 
   // State that is shared across all views
   const [address, setAddress] = useState<string | undefined>();
@@ -110,14 +117,18 @@ const DeveloperSuite = () => {
       <Sidebar
         activeView={activeView}
         onNavigate={setActiveView}
-        walletState={{ connected, connect, disconnect, address, adaBalance, network, networkId, testnet, setTestnet, pkh, pk, error }}
+        walletState={{ connected, connect, disconnect, refresh: updateWalletState, address, adaBalance, network, networkId, testnet, setTestnet, pkh, pk, error }}
         utxos={utxos}
         selectedUtxos={selectedUtxos}
         onSelectionChange={setSelectedUtxos}
       />
       <MainContent
         activeView={activeView}
-        walletProps={{ connected, wallet, address, network, updateWalletState, selectedUtxos }}
+        walletProps={{ connected, wallet, address, network, updateWalletState, selectedUtxos, onSubmitted }}
+        watchRequest={watchRequest}
+        onWatchConfirmed={(hash, confirmedNetwork) => {
+          if (watchRequest?.hash === hash && confirmedNetwork === network && wallet) void updateWalletState();
+        }}
       />
     </div>
   );
@@ -128,7 +139,7 @@ const DeveloperSuite = () => {
 // Sidebar and Navigation Components
 // ==================================================================
 const Sidebar = ({ activeView, onNavigate, walletState, utxos, selectedUtxos, onSelectionChange }) => {
-  const { connected, connect, disconnect, address, adaBalance, network, networkId, testnet, setTestnet, pkh, pk, error } = walletState;
+  const { connected, connect, disconnect, refresh, address, adaBalance, network, networkId, testnet, setTestnet, pkh, pk, error } = walletState;
 
   return (
     <aside className="w-full md:w-1/3 lg:w-1/4 space-y-6">
@@ -172,6 +183,7 @@ const Sidebar = ({ activeView, onNavigate, walletState, utxos, selectedUtxos, on
               value={pk ? `${pk.slice(0, 10)}...${pk.slice(-4)}` : 'N/A'}
               fullValue={pk}
             />
+            <button onClick={refresh} className="text-xs text-violet-300 hover:underline">Refresh wallet UTxOs</button>
           </div>
         )}
         {error && <p className="text-red-400 text-sm mb-4">{error}</p>}
@@ -180,6 +192,7 @@ const Sidebar = ({ activeView, onNavigate, walletState, utxos, selectedUtxos, on
           <NavItem icon={<Send size={18} />} label="Simple Transfer" isActive={activeView === 'simple_transfer'} onClick={() => onNavigate('simple_transfer')} />
           <NavItem icon={<Search size={18} />} label="Deploy Contract" isActive={activeView === 'deploy_contract'} onClick={() => onNavigate('deploy_contract')} />
           <NavItem icon={<FileJson size={18} />} label="Contract Simulator" isActive={activeView === 'contract_simulator'} onClick={() => onNavigate('contract_simulator')} />
+          <NavItem icon={<Activity size={18} />} label="Transaction Watch" isActive={activeView === 'transaction_watch'} onClick={() => onNavigate('transaction_watch')} />
         </nav>
       </div>
       {/* UTXO SELECTOR IS NOW HERE */}
@@ -190,12 +203,13 @@ const Sidebar = ({ activeView, onNavigate, walletState, utxos, selectedUtxos, on
   );
 };
 
-const MainContent = ({ activeView, walletProps }) => {
+const MainContent = ({ activeView, walletProps, watchRequest, onWatchConfirmed }) => {
   return (
     <main className="flex-1">
       {activeView === 'simple_transfer' && <SimpleTransferView {...walletProps} />}
       {activeView === 'deploy_contract' && <DeployContractView {...walletProps} />}
       {activeView === 'contract_simulator' && <ContractInteractionView {...walletProps} />}
+      {activeView === 'transaction_watch' && <TransactionWatch key={watchRequest ? `${watchRequest.network}:${watchRequest.hash}` : 'manual'} initialHash={watchRequest?.hash} initialNetwork={watchRequest?.network || walletProps.network} onConfirmed={onWatchConfirmed} />}
     </main>
   );
 };
@@ -203,7 +217,7 @@ const MainContent = ({ activeView, walletProps }) => {
 // ==================================================================
 // Feature View: Simple Transfer
 // ==================================================================
-const SimpleTransferView = ({ connected, wallet, address, network, selectedUtxos, updateWalletState }) => {
+const SimpleTransferView = ({ connected, wallet, address, network, selectedUtxos, onSubmitted }) => {
   const [loading, setLoading]       = useState(false);
   const [txHash, setTxHash]         = useState<string | null>(null);
   const [error, setError]           = useState<string | null>(null);
@@ -271,7 +285,7 @@ const SimpleTransferView = ({ connected, wallet, address, network, selectedUtxos
         setTxHash(hash);
         setSummary(null);
         setUnsignedTx(null);
-        await updateWalletState?.();
+        onSubmitted(hash, network);
     } catch (err: any) {
         setError(err.message || "Transaction failed.");
     } finally {
@@ -310,7 +324,7 @@ const SimpleTransferView = ({ connected, wallet, address, network, selectedUtxos
                 <button onClick={signAndSubmit} disabled={!unsignedTx || loading} className="w-full bg-violet-600 hover:bg-violet-700 text-white font-bold py-3 px-4 rounded-lg transition-colors disabled:bg-slate-800 disabled:text-slate-500">
                   {loading && unsignedTx ? 'Submitting...' : 'Sign & Submit'}
                 </button>
-                {error && <div className="text-red-400 text-sm text-center p-2 bg-red-900/50 rounded-md">{error}</div>}
+                {error && <div className="text-red-400 text-sm p-3 bg-red-900/50 rounded-md"><p>{error}</p>{transactionErrorHint(error) && <p className="mt-2 text-amber-200">{transactionErrorHint(error)}</p>}</div>}
                 {txHash && <div className="text-green-400 text-sm text-center p-2 bg-green-900/50 rounded-md">Success! Tx ID: <a href={explorerTxUrl(network, txHash)} target="_blank" rel="noreferrer" className="underline font-mono text-xs break-all">{txHash}</a></div>}
             </div>
         </div>
