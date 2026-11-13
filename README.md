@@ -30,10 +30,11 @@ Open <http://localhost:3000>. Start on preprod with test ADA before using mainne
 ```bash
 npm run typecheck
 npm test
+npm run test:live
 npm run build
 ```
 
-The automated tests cover exact ADA conversion, network validation, explorer routing, confirmation parsing, error guidance, and Plutus data round trips and hashes. End to end wallet signing and on-chain script evaluation require a funded wallet and are not part of automated tests.
+`npm test` runs deterministic unit tests against the actual conversion, validation, parsing, preview-key, and Plutus serialization functions. Their inputs are fixed vectors; the transaction parser uses a constructed Koios-shaped response, and the provider test replaces Koios with a local fake to exercise empty and failure cases. These tests do not prove live connectivity. `npm run test:live` makes real preprod Koios requests through the app's route handler and Mesh SDK, checks a confirmed on-chain transaction, and loads UTxOs from a real address. It needs internet access and can fail during provider outages or if the reference UTxO is spent. End to end wallet signing and on-chain script evaluation require a funded wallet and are not covered by these commands.
 
 The Transaction Watch checks every 5 seconds for up to 10 minutes. A missing hash can mean propagation delay, a wrong network, or a transaction that was never accepted; it does not prove failure. The app refreshes wallet UTxOs after confirmation instead of immediately after submission, and does not automatically sign or resubmit.
 

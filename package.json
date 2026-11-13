@@ -20,7 +20,8 @@
     "start": "next start",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit --incremental false",
-    "test": "node --import tsx --test tests/*.test.ts"
+    "test": "node --import tsx --test tests/*.test.ts",
+    "test:live": "node --import tsx --test tests/*.integration.ts"
   },
   "devDependencies": {
     "@types/react": "19.3.0",
