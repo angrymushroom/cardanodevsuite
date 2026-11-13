@@ -1,19 +1,18 @@
 'use client';
 
 import { useState } from 'react';
-import { useWallet } from '@meshsdk/react';
-import { BlockfrostProvider, MeshTxBuilder } from '@meshsdk/core';
+import { MeshTxBuilder } from '@meshsdk/core';
 import { FormInput, FormTextarea } from './Form';
+import { adaToLovelace, assertAddressNetwork, explorerTxUrl, type CardanoNetwork } from '../lib/cardano';
+import { createKoiosProvider } from '../lib/provider';
 
-export default function DeployContractView({ connected, updateWalletState }) {
-  const { wallet } = useWallet();
+export default function DeployContractView({ connected, wallet, network, updateWalletState }: { connected: boolean; wallet: any; network: CardanoNetwork; updateWalletState?: () => Promise<void> }) {
   const [isLoading, setIsLoading] = useState(false);
   const [txHash, setTxHash] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const [scriptAddress, setScriptAddress] = useState('');
   const [amount, setAmount] = useState('');
-  const [ownerPkh, setOwnerPkh] = useState('');
   const [datum, setDatum] = useState(`{
     "constructor": 0,
     "fields": [
@@ -30,39 +29,20 @@ export default function DeployContractView({ connected, updateWalletState }) {
     setTxHash(null);
 
     try {
-      const lovelaceAmount = (parseFloat(amount) * 1000000).toString();
+      assertAddressNetwork(scriptAddress, network);
+      const lovelaceAmount = adaToLovelace(amount);
       const assets = [{ unit: "lovelace", quantity: lovelaceAmount }];
-      const usedAddresses = await wallet.getUsedAddresses();
-      const walletAddress = usedAddresses[0];
+      const walletAddress = await wallet.getChangeAddress();
       const utxos = await wallet.getUtxos();
-      const provider = new BlockfrostProvider('preprodUfxEoynE8cv2NDY0NegobQrU78piDVnN');
+      const provider = createKoiosProvider(network);
 
       const meshTxBuilder = new MeshTxBuilder({
         fetcher: provider,
-        submitter: provider,
+        params: await provider.fetchProtocolParameters(),
       });
 
-      // Parse the user-defined datum
-      let datumObject;
-      try {
-        datumObject = JSON.parse(datum);
-      } catch (e) {
-        throw new Error("Datum is not valid JSON.");
-      }
-
-
-      // --- START VALIDATION ---
-      if (!scriptAddress || !amount || !datumObject) {
-        throw new Error("Script Address, Amount, and datum json are all required.");
-      }
-
-      const parsedAmount = parseFloat(amount);
-      if (isNaN(parsedAmount) || parsedAmount <= 0) {
-          throw new Error("Amount must be a positive number.");
-      }
-
-      console.log("--datum object: ",datumObject)
-      // --- END VALIDATION ---
+      const datumObject = JSON.parse(datum);
+      if (!datumObject || typeof datumObject !== 'object') throw new Error('Datum must be a JSON object.');
 
       const unsignedTx = await meshTxBuilder
         .txOut(scriptAddress, assets)
@@ -75,7 +55,7 @@ export default function DeployContractView({ connected, updateWalletState }) {
       const hash = await wallet.submitTx(signedTx);
 
       setTxHash(hash);
-      if (updateWalletState) updateWalletState();
+      await updateWalletState?.();
 
     } catch (err: any) {
       setError(err.message || 'Deployment failed. Ensure collateral is set.');
@@ -97,7 +77,7 @@ export default function DeployContractView({ connected, updateWalletState }) {
         {error && <div className="mt-4 text-red-400 text-sm text-center p-2 bg-red-900/50 rounded-md">{error}</div>}
         {txHash && (
           <div className="mt-4 text-green-400 text-sm text-center p-2 bg-green-900/50 rounded-md">
-            Success! Tx ID: <a href={`https://preprod.cardanoscan.io/transaction/${txHash}`} target="_blank" rel="noreferrer" className="underline font-mono text-xs break-all">{txHash}</a>
+            Success! Tx ID: <a href={explorerTxUrl(network, txHash)} target="_blank" rel="noreferrer" className="underline font-mono text-xs break-all">{txHash}</a>
           </div>
         )}
       </div>

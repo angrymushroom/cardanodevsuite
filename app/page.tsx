@@ -1,14 +1,13 @@
 'use client';
 
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { useWallet, useWalletList, useNetwork } from '@meshsdk/react';
-import { Transaction, UTxO } from '@meshsdk/core';
-import { PlutusData, PlutusDatumSchema } from '@emurgo/cardano-serialization-lib-asmjs';
+import { BrowserWallet, Transaction, UTxO, resolvePaymentKeyHash } from '@meshsdk/core';
 import { Sparkles, ArrowRight, Power, ChevronsRight, FileJson, Send, Search, Clipboard } from 'lucide-react';
 import UTXOSelector from '../components/UTXOSelector';
-import UTxODetailModal from '../components/UTxODetailModal';
-import SimulationResult from '../components/SimulationResult';
-import DeployContractView from '../components/DeployContractView'; // <-- ADD THIS IMPORT
+import DeployContractView from '../components/DeployContractView';
+import ContractInteractionView from '../components/ContractInteractionView';
+import { adaToLovelace, assertAddressNetwork, explorerTxUrl, formatAda, walletNetwork, type TestnetNetwork } from '../lib/cardano';
+import { createKoiosProvider } from '../lib/provider';
 
 // Main Page Component (Landing Page)
 export default function Home() {
@@ -51,40 +50,54 @@ export default function Home() {
 // ==================================================================
 const DeveloperSuite = () => {
   const [activeView, setActiveView] = useState('simple_transfer');
-  const { connected, wallet, connect, disconnect } = useWallet();
-  const network = useNetwork();
-  
+  const [wallet, setWallet] = useState<BrowserWallet | null>(null);
+  const [networkId, setNetworkId] = useState<number | undefined>();
+  const connected = wallet !== null;
+  const connect = async (name: string) => {
+    try {
+      const nextWallet = await BrowserWallet.enable(name);
+      setNetworkId(await nextWallet.getNetworkId());
+      setWallet(nextWallet);
+    } catch (e: any) {
+      setError(e.message || 'Wallet connection failed.');
+    }
+  };
+  const disconnect = () => { setWallet(null); setNetworkId(undefined); };
+  const [testnet, setTestnet] = useState<TestnetNetwork>('preprod');
+  const network = walletNetwork(networkId, testnet);
+
   // State that is shared across all views
   const [address, setAddress] = useState<string | undefined>();
   const [adaBalance, setAdaBalance] = useState<string>('0');
   const [utxos, setUtxos] = useState<UTxO[]>([]);
-  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [pkh, setPkh] = useState<string | null>(null); // <-- Add PKH state here
+  const [pkh, setPkh] = useState<string | null>(null);
+  const [pk, setPk] = useState<string | null>(null);
 
   // LIFTED STATE: Selected UTxOs is now managed here
   const [selectedUtxos, setSelectedUtxos] = useState<UTxO[]>([]);
 
   const updateWalletState = useCallback(async () => {
     if (connected && wallet) {
-        setLoading(true);
         try {
             const currentUtxos = await wallet.getUtxos();
             const currentBalance = await wallet.getBalance();
-            const usedAddresses = await wallet.getUsedAddresses();
-            const dRep = await wallet.getDRep(); 
-            const pkh = dRep.publicKeyHash;
+            const walletAddress = await wallet.getChangeAddress();
+            // CIP-95 is optional. Its DRep key is different from the payment key hash.
+            const dRep = await wallet.getDRep().catch(() => undefined);
 
             setUtxos(currentUtxos || []);
-            setAddress(usedAddresses[0]);
+            setSelectedUtxos([]);
+            setAddress(walletAddress);
             setAdaBalance(currentBalance.find(a => a.unit === 'lovelace')?.quantity || '0');
-            setPkh(pkh); // <-- Set PKH state here
+            setPkh(resolvePaymentKeyHash(walletAddress));
+            setPk(dRep?.publicKey || null);
+            setError(null);
 
 
         } catch (e) { console.error(e); setError("Failed to fetch wallet data."); }
-        finally { setLoading(false); }
     } else {
-        setAddress(undefined); setAdaBalance('0'); setUtxos([]); setSelectedUtxos([]);
+        setAddress(undefined); setAdaBalance('0'); setUtxos([]); setSelectedUtxos([]); setPkh(null); setPk(null); setError(null);
     }
   }, [connected, wallet]);
 
@@ -94,17 +107,17 @@ const DeveloperSuite = () => {
 
   return (
     <div className="flex flex-col md:flex-row gap-6">
-      <Sidebar 
-        activeView={activeView} 
+      <Sidebar
+        activeView={activeView}
         onNavigate={setActiveView}
-        walletState={{ connected, connect, disconnect, address, adaBalance, network, pkh }}
+        walletState={{ connected, connect, disconnect, address, adaBalance, network, networkId, testnet, setTestnet, pkh, pk, error }}
         utxos={utxos}
         selectedUtxos={selectedUtxos}
         onSelectionChange={setSelectedUtxos}
       />
-      <MainContent 
+      <MainContent
         activeView={activeView}
-        walletProps={{ connected, wallet, address, updateWalletState, selectedUtxos }}
+        walletProps={{ connected, wallet, address, network, updateWalletState, selectedUtxos }}
       />
     </div>
   );
@@ -115,8 +128,8 @@ const DeveloperSuite = () => {
 // Sidebar and Navigation Components
 // ==================================================================
 const Sidebar = ({ activeView, onNavigate, walletState, utxos, selectedUtxos, onSelectionChange }) => {
-  const { connected, connect, disconnect, address, adaBalance, network, pkh } = walletState;
-  
+  const { connected, connect, disconnect, address, adaBalance, network, networkId, testnet, setTestnet, pkh, pk, error } = walletState;
+
   return (
     <aside className="w-full md:w-1/3 lg:w-1/4 space-y-6">
       <div className="bg-slate-900 border border-slate-700 rounded-2xl p-6 sticky top-24">
@@ -128,28 +141,40 @@ const Sidebar = ({ activeView, onNavigate, walletState, utxos, selectedUtxos, on
           <div className="space-y-3 text-sm mb-6">
             <div className="flex justify-between">
               <span className="text-slate-400">Network:</span>
-              <span className={`font-semibold ${network === 1 ? 'text-green-400' : 'text-yellow-400'}`}>
-                {network === 1 ? 'Mainnet' : 'Testnet'}
+              <span className={`font-semibold ${network === 'mainnet' ? 'text-green-400' : 'text-yellow-400'}`}>
+                {network === 'mainnet' ? 'Mainnet' : network === 'preprod' ? 'Preprod' : 'Preview'}
               </span>
             </div>
+            {networkId === 0 && <label className="block text-slate-400">Testnet
+              <select value={testnet} onChange={e => setTestnet(e.target.value as TestnetNetwork)} className="mt-1 block w-full bg-slate-800 border border-slate-700 rounded px-2 py-1 text-white">
+                <option value="preprod">Preprod</option><option value="preview">Preview</option>
+              </select>
+            </label>}
+            {networkId === 0 && <p className="text-xs text-slate-500">CIP-30 identifies both testnets as network 0. Select the network configured in your wallet.</p>}
             {/* Use the new InfoRow component for these */}
-            <InfoRow 
-              label="Balance" 
-              value={`${(parseInt(adaBalance) / 1000000).toFixed(6)} ADA`} 
-              fullValue={(parseInt(adaBalance) / 1000000).toString()}
+            <InfoRow
+              label="Balance"
+              value={`${formatAda(adaBalance)} ADA`}
+              fullValue={formatAda(adaBalance)}
             />
-            <InfoRow 
-              label="Address" 
-              value={address ? `${address.slice(0, 6)}...${address.slice(-4)}` : 'N/A'} 
+            <InfoRow
+              label="Address"
+              value={address ? `${address.slice(0, 10)}...${address.slice(-4)}` : 'N/A'}
               fullValue={address}
             />
-            <InfoRow 
-              label="PKH" 
-              value={pkh ? `${pkh.slice(0, 6)}...${pkh.slice(-4)}` : 'N/A'} 
+            <InfoRow
+              label="PKH"
+              value={pkh ? `${pkh.slice(0, 10)}...${pkh.slice(-4)}` : 'N/A'}
               fullValue={pkh}
+            />
+            <InfoRow
+              label="DRep PK"
+              value={pk ? `${pk.slice(0, 10)}...${pk.slice(-4)}` : 'N/A'}
+              fullValue={pk}
             />
           </div>
         )}
+        {error && <p className="text-red-400 text-sm mb-4">{error}</p>}
         <nav className="space-y-2">
           <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Tools</h3>
           <NavItem icon={<Send size={18} />} label="Simple Transfer" isActive={activeView === 'simple_transfer'} onClick={() => onNavigate('simple_transfer')} />
@@ -178,16 +203,20 @@ const MainContent = ({ activeView, walletProps }) => {
 // ==================================================================
 // Feature View: Simple Transfer
 // ==================================================================
-const SimpleTransferView = ({ connected, wallet, address, utxos, updateWalletState }) => {
+const SimpleTransferView = ({ connected, wallet, address, network, selectedUtxos, updateWalletState }) => {
   const [loading, setLoading]       = useState(false);
   const [txHash, setTxHash]         = useState<string | null>(null);
   const [error, setError]           = useState<string | null>(null);
-  const [selectedUtxos, setSelectedUtxos] = useState<UTxO[]>([]);
   const [recipient, setRecipient]   = useState('');
   const [amount, setAmount]         = useState('');
   const [metadata, setMetadata]     = useState('{}');
   const [unsignedTx, setUnsignedTx] = useState<string | null>(null);
   const [summary, setSummary]       = useState<any>(null);
+
+  useEffect(() => {
+    setUnsignedTx(null);
+    setSummary(null);
+  }, [recipient, amount, metadata, selectedUtxos, network, address]);
 
   async function buildPreview() {
     if (!wallet) return;
@@ -196,19 +225,24 @@ const SimpleTransferView = ({ connected, wallet, address, utxos, updateWalletSta
     setSummary(null);
     setUnsignedTx(null);
     try {
-      const tx = new Transaction({ initiator: wallet });
-      tx.sendLovelace(recipient, (parseFloat(amount) * 1000000).toString());
+      assertAddressNetwork(recipient, network);
+      const provider = createKoiosProvider(network);
+      const tx = new Transaction({ initiator: wallet, fetcher: provider, params: await provider.fetchProtocolParameters() });
+      tx.sendLovelace(recipient, adaToLovelace(amount));
       if (selectedUtxos.length > 0) tx.setTxInputs(selectedUtxos);
 
       if (metadata.trim() !== '{}' && metadata.trim() !== '') {
         const metadataJson = JSON.parse(metadata);
-        const label = Object.keys(metadataJson)[0]; 
-        tx.setMetadata(parseInt(label), metadataJson[label]);
+        if (typeof metadataJson !== 'object' || metadataJson === null || Array.isArray(metadataJson)) throw new Error('Metadata must be a JSON object keyed by numeric labels.');
+        for (const [label, value] of Object.entries(metadataJson)) {
+          if (!/^\d+$/.test(label) || !Number.isSafeInteger(Number(label))) throw new Error('Metadata labels must be non-negative integers.');
+          tx.setMetadata(Number(label), value as object);
+        }
       }
-    
+
       const builtTxCbor = await tx.build();
       if (!builtTxCbor) throw new Error("Failed to build transaction.");
-      
+
       setUnsignedTx(builtTxCbor);
 
       const txBody = tx.txBuilder.meshTxBuilderBody;
@@ -237,7 +271,7 @@ const SimpleTransferView = ({ connected, wallet, address, utxos, updateWalletSta
         setTxHash(hash);
         setSummary(null);
         setUnsignedTx(null);
-        if(updateWalletState) updateWalletState(); 
+        await updateWalletState?.();
     } catch (err: any) {
         setError(err.message || "Transaction failed.");
     } finally {
@@ -261,8 +295,8 @@ const SimpleTransferView = ({ connected, wallet, address, utxos, updateWalletSta
             <div className="bg-slate-900 border border-slate-700 rounded-2xl p-6">
                 <h2 className="text-xl font-bold mb-4">Pre-flight Summary</h2>
                 <div className="space-y-3 text-sm">
-                  <SummaryRow label="Calculated Fee:" value={summary ? `${parseInt(summary.fee) / 1000000} ADA` : '-'} />
-                  <SummaryRow label="Change Output:" value={summary ? `${parseInt(summary.change) / 1000000} ADA` : '-'} />
+                  <SummaryRow label="Calculated Fee:" value={summary?.fee ? `${formatAda(summary.fee)} ADA` : '-'} />
+                  <SummaryRow label="Change Output:" value={summary ? `${formatAda(summary.change)} ADA` : '-'} />
                   <div className="pt-2">
                       <label className="block text-sm font-medium text-slate-300">Transaction CBOR</label>
                       <textarea readOnly value={summary ? summary.cbor : ''} className="mt-1 w-full h-24 bg-slate-950 text-xs p-2 rounded-md font-mono break-all resize-none border border-slate-700"></textarea>
@@ -277,166 +311,9 @@ const SimpleTransferView = ({ connected, wallet, address, utxos, updateWalletSta
                   {loading && unsignedTx ? 'Submitting...' : 'Sign & Submit'}
                 </button>
                 {error && <div className="text-red-400 text-sm text-center p-2 bg-red-900/50 rounded-md">{error}</div>}
-                {txHash && <div className="text-green-400 text-sm text-center p-2 bg-green-900/50 rounded-md">Success! Tx ID: <a href={`https://preprod.cardanoscan.io/transaction/${txHash}`} target="_blank" rel="noreferrer" className="underline font-mono text-xs break-all">{txHash}</a></div>}
+                {txHash && <div className="text-green-400 text-sm text-center p-2 bg-green-900/50 rounded-md">Success! Tx ID: <a href={explorerTxUrl(network, txHash)} target="_blank" rel="noreferrer" className="underline font-mono text-xs break-all">{txHash}</a></div>}
             </div>
         </div>
-    </div>
-  );
-};
-
-// ==================================================================
-// Feature View: Contract Interaction
-// ==================================================================
-const ContractInteractionView = ({ connected, wallet, address }) => {
-  const [scriptAddress, setScriptAddress] = useState('');
-  const [scriptUtxos, setScriptUtxos] = useState<any[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [selectedScriptUtxo, setSelectedScriptUtxo] = useState<any | null>(null);
-
-  const [datum, setDatum] = useState('');
-  const [redeemer, setRedeemer] = useState('');
-  const [scriptCbor, setScriptCbor] = useState('');
-
-  const [isSimulating, setIsSimulating] = useState(false);
-  const [simulationResult, setSimulationResult] = useState<any | null>(null);
-
-  const fetchScriptUtxos = async () => {
-    if (!scriptAddress) return alert('Please enter a script address.');
-    setIsLoading(true);
-    setError(null);
-    setScriptUtxos([]);
-    try {
-      const apiKey = 'preprodUfxEoynE8cv2NDY0NegobQrU78piDVnN'; // IMPORTANT: Replace with your key
-      const response = await fetch(
-        `https://cardano-preprod.blockfrost.io/api/v0/addresses/${scriptAddress}/utxos`,
-        { headers: { project_id: apiKey } }
-      );
-      if (!response.ok) throw new Error('Failed to fetch UTxOs.');
-      const data = await response.json();
-      setScriptUtxos(data);
-    } catch (err: any) {
-      setError(err.message);
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    if (selectedScriptUtxo?.inline_datum) {
-      try {
-        const plutusData = PlutusData.from_hex(selectedScriptUtxo.inline_datum);
-        const datumJson = JSON.parse(plutusData.to_json(PlutusDatumSchema.DetailedSchema));
-        setDatum(JSON.stringify(datumJson, null, 2));
-      } catch (error) {
-        setDatum('// Failed to decode datum CBOR.');
-      }
-    } else {
-      setDatum('// No inline datum found on selected UTxO.');
-    }
-  }, [selectedScriptUtxo]);
-
-  async function handleSimulate() {
-    if (!wallet || !selectedScriptUtxo) {
-      return alert("Please select a script UTxO to interact with.");
-    }
-    setIsSimulating(true);
-    setError(null);
-    setSimulationResult(null);
-
-    try {
-      const tx = new Transaction({ initiator: wallet });
-
-      tx.redeemValue({
-        value: selectedScriptUtxo,
-        script: { version: 'V2', code: scriptCbor },
-        datum: selectedScriptUtxo.inline_datum ? 'inline' : selectedScriptUtxo.data_hash,
-        redeemer: JSON.parse(redeemer),
-      });
-
-      tx.setChangeAddress(address);
-
-      const unsignedTxCbor = await tx.build();
-      
-      const apiKey = 'preprodUfxEoynE8cv2NDY0NegobQrU78piDVnN'; // IMPORTANT: Replace with your key
-      const response = await fetch(
-        'https://cardano-preprod.blockfrost.io/api/v0/utils/txs/evaluate',
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/cbor',
-            'project_id': apiKey,
-          },
-          body: unsignedTxCbor,
-        }
-      );
-      
-      const result = await response.json();
-      if (!response.ok) {
-        throw new Error(result.message || 'Simulation request failed.');
-      }
-
-      setSimulationResult({ result });
-
-    } catch (err: any) {
-      setError(err.message);
-      setSimulationResult({ error: true, reason: err.message });
-    } finally {
-      setIsSimulating(false);
-    }
-  }
-
-  return (
-    <div className="space-y-6">
-      <div className="bg-slate-900 border border-slate-700 rounded-2xl p-8">
-        <h2 className="text-2xl font-bold mb-6">Step 1: Target Contract & UTxO</h2>
-        <div className="space-y-4">
-          <FormInput label="Script Address" placeholder="addr_test1w..." value={scriptAddress} onChange={setScriptAddress} />
-          <button onClick={fetchScriptUtxos} disabled={isLoading || !connected} className="w-full bg-slate-700 hover:bg-slate-600 text-white font-bold py-2 px-4 rounded-lg transition-colors disabled:bg-slate-800 disabled:text-slate-500">
-            {isLoading ? 'Fetching...' : 'Fetch Locked UTxOs'}
-          </button>
-          <div className="mt-4">
-            <h3 className="text-lg font-semibold text-slate-300">Locked UTxOs</h3>
-            <div className="space-y-2 max-h-60 overflow-y-auto mt-2 pr-2 border-t border-slate-700 pt-4">
-              {scriptUtxos.map((utxo, i) => (
-                <div 
-                  key={i} 
-                  onClick={() => setSelectedScriptUtxo(utxo)} 
-                  className={`p-3 rounded-lg border text-sm cursor-pointer transition-all ${
-                    selectedScriptUtxo?.tx_hash === utxo.tx_hash && selectedScriptUtxo?.output_index === utxo.output_index
-                    ? 'bg-violet-900/50 border-violet-500'
-                    : 'bg-slate-800 border-slate-700 hover:border-violet-600'
-                  }`}
-                >
-                  <p className="font-bold">{(parseInt(utxo.amount.find(a => a.unit === 'lovelace')?.quantity || '0') / 1000000)} ADA</p>
-                  <p className="text-xs text-slate-400 truncate">Hash: {utxo.tx_hash}</p>
-                  {utxo.data_hash && <p className="text-xs text-amber-400">Datum Present</p>}
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-        {error && <div className="mt-4 text-red-400 text-sm">{error}</div>}
-      </div>
-      <div className={`bg-slate-900 border border-slate-700 rounded-2xl p-8 transition-opacity ${!selectedScriptUtxo ? 'opacity-40' : ''}`}>
-        <h2 className="text-2xl font-bold mb-6">Step 2: Interaction Data</h2>
-        <div className="space-y-4">
-          <FormTextarea label="Datum (auto-populated)" value={datum} onChange={setDatum} />
-          <FormTextarea label="Redeemer (JSON)" value={redeemer} onChange={setRedeemer} placeholder='{ "constructor": 0, "fields": [] }' />
-          <FormTextarea label="Script CBOR Hex" value={scriptCbor} onChange={setScriptCbor} placeholder='58... (from your plutus.json)' />
-        </div>
-      </div>
-      <div className={`bg-slate-900 border border-slate-700 rounded-2xl p-8 transition-opacity ${!selectedScriptUtxo ? 'opacity-40' : ''}`}>
-        <h2 className="text-2xl font-bold mb-6">Step 3: Actions</h2>
-        <div className="space-y-4">
-          <button onClick={handleSimulate} disabled={isSimulating || !connected || !selectedScriptUtxo} className="w-full bg-slate-700 hover:bg-slate-600 text-white font-bold py-3 px-4 rounded-lg transition-colors disabled:bg-slate-800 disabled:text-slate-500">
-            {isSimulating ? 'Simulating...' : 'Simulate Transaction'}
-          </button>
-          <button disabled className="w-full bg-violet-800 text-slate-500 font-bold py-3 px-4 rounded-lg cursor-not-allowed">Build & Submit</button>
-        </div>
-        <SimulationResult result={simulationResult} />
-        {error && <div className="mt-4 text-red-400 text-sm">{error}</div>}
-      </div>
     </div>
   );
 };
@@ -452,8 +329,9 @@ const NavItem = ({ icon, label, isActive, onClick }) => (
     </button>
 );
 const CustomWalletConnector = ({ onConnect, connected, onDisconnect }) => {
-    const wallets = useWalletList();
+    const [wallets, setWallets] = useState<ReturnType<typeof BrowserWallet.getInstalledWallets>>([]);
     const [isModalOpen, setIsModalOpen] = useState(false);
+    useEffect(() => { setWallets(BrowserWallet.getInstalledWallets()); }, [isModalOpen]);
     const handleConnect = (walletName: string) => {
         onConnect(walletName);
         setIsModalOpen(false);
@@ -467,6 +345,8 @@ const CustomWalletConnector = ({ onConnect, connected, onDisconnect }) => {
                   <h3 className="font-bold text-lg mb-4">Select a Wallet</h3>
                   {wallets.map(wallet => (
                   <button key={wallet.name} onClick={() => handleConnect(wallet.name)} className="w-full flex items-center gap-4 p-3 hover:bg-slate-700 rounded-md text-left">
+                      {/* Wallet extensions provide data URL icons, which do not need image optimization. */}
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
                       <img src={wallet.icon} alt={wallet.name} width={32} height={32} />
                       {wallet.name}
                   </button>

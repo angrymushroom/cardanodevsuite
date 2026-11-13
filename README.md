@@ -1,44 +1,38 @@
 # Cardano Developer Suite
 
-![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)
+A browser based transaction builder and script evaluator for Cardano.
 
-A web-based developer tool for the Cardano blockchain designed to simplify transaction building and testing. An open-source, "Postman-like" suite for dApp developers.
+## Features
 
-## Key Features
+- Connect a CIP-30 wallet and inspect its address, payment key hash, balance, and UTxOs. The DRep public key is shown when the wallet supports CIP-95.
+- Build an ADA transfer, optionally choose inputs and attach metadata, inspect the fee, change and unsigned CBOR, then sign and submit with the wallet.
+- Lock ADA at a script address with an inline datum.
+- Fetch script UTxOs and evaluate a Plutus V2 or V3 script spend with a redeemer and collateral. Evaluation does **not** sign or submit the transaction.
+- Use mainnet, preprod, or preview. CIP-30 returns network ID `0` for both testnets, so select the testnet that matches your wallet. Transaction links follow that choice.
 
-### V1: The Foundation
--   **Visual Transaction Builder:** An intuitive UI to construct transactions without using the command line.
--   **Live UTXO Management:** Connect your wallet to see and select available UTxOs to use as inputs.
--   **Automatic Fee & Change Calculation:** The suite automatically calculates the required fee and change output for every transaction.
--   **Pre-flight Summary:** A detailed summary of the transaction, including the final fee, change, and raw CBOR, for easy debugging before signing.
--   **Seamless Wallet Connection:** Connects to popular Cardano browser wallets using MeshJS.
+The app uses [Mesh SDK](https://meshjs.dev/) and the public [Koios provider](https://meshjs.dev/providers/koios). A same-origin route forwards the required Koios calls because its public endpoint does not allow arbitrary browser origins. It does not embed an API key. Transaction builders fetch current protocol parameters from the provider instead of using a checked in snapshot. Network access and a compatible wallet are needed for chain operations. Public Koios endpoints may rate limit requests; production deployments can configure another provider.
 
-### V2: The Smart Contract Hub
--   **Contract Interaction Panel:** A dedicated UI to interact with smart contracts.
--   **Script UTXO Viewer:** Fetch and view all UTXOs currently locked at a specific script address.
--   **Datum Hash Display:** For each script UTXO, the Datum Hash is displayed, allowing developers to inspect the data associated with the UTXO.
--   **UTXO Detail View:** Click on any script UTXO to see a detailed breakdown of its contents.
+## Run
 
-## Tech Stack
+Requires Node.js 20.9 or later, npm, and a CIP-30 browser wallet. For script spending, configure collateral in the wallet.
 
--   **Framework:** Next.js
--   **Language:** TypeScript
--   **UI:** React & Tailwind CSS
--   **Blockchain Interaction:** MeshJS
--   **Data Provider:** Blockfrost API
+```bash
+npm ci
+npm run dev
+```
 
-### Prerequisites
+Open <http://localhost:3000>. Start on preprod with test ADA before using mainnet funds. The script CBOR and datum/redeemer must match the validator being tested. A datum hash input needs the original datum JSON; an inline datum is taken from its UTxO.
 
--   Node.js (v18 or later)
--   npm
--   A Cardano browser wallet (like Eternl or Nami) set to the **Preprod Testnet**.
+## Checks
 
-## Project Roadmap
+```bash
+npm run typecheck
+npm test
+npm run build
+```
 
--   **✅ V1: The Foundation:** Core transaction builder and inspector.
--   **✅ V2: The Smart Contract Hub:** UI for viewing script UTXOs and their datums.
--   **🔜 V3: The Automation Suite:** Introduce test automation and code generation.
+The automated tests cover exact ADA conversion, network validation and explorer routing. End to end wallet signing and on-chain script evaluation require a funded wallet and are not part of automated tests.
 
-## License
+## Cardano compatibility
 
-Distributed under the MIT License. See `LICENSE.txt` for more information.
+Cardano is in the Conway era. The [van Rossem upgrade](https://docs.cardano.org/about-cardano/evolution/upgrades/van-rossem) moved mainnet to protocol version 11 in July 2026 without changing the transaction format. This app supports Plutus V2 and V3 interactions and uses live chain parameters, so it does not pin protocol version 11 fee or cost values. Governance can change those values.

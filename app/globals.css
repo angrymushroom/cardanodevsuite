@@ -19,7 +19,7 @@ body {
       rgb(var(--background-end-rgb))
     )
     rgb(var(--background-start-rgb)); /* Apply background gradient */
-  font-family: 'Inter', sans-serif; /* Set default font family */
+  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
 }
 
 /* Utility layer for custom utilities */

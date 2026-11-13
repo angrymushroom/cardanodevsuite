@@ -1,11 +1,7 @@
 // app/layout.tsx
 
 import type { Metadata } from "next";
-import { Inter } from "next/font/google";
 import "./globals.css";
-import MeshProviderWrapper from "../components/MeshProviderWrapper"; // Import the new wrapper
-
-const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
   title: "Cardano Developer Suite",
@@ -19,9 +15,8 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body className={inter.className}>
-        {/* Use the client component wrapper here */}
-        <MeshProviderWrapper>{children}</MeshProviderWrapper>
+      <body>
+        {children}
       </body>
     </html>
   );
