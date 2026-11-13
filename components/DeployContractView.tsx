@@ -7,7 +7,7 @@ import { adaToLovelace, assertAddressNetwork, explorerTxUrl, type CardanoNetwork
 import { createKoiosProvider } from '../lib/provider';
 import { transactionErrorHint } from '../lib/transactionDiagnostics';
 
-export default function DeployContractView({ connected, wallet, network, onSubmitted }: { connected: boolean; wallet: any; network: CardanoNetwork; onSubmitted?: (hash: string, network: CardanoNetwork) => void }) {
+export default function DeployContractView({ connected, wallet, network, onSubmitted, onInspectDatum }: { connected: boolean; wallet: any; network: CardanoNetwork; onSubmitted?: (hash: string, network: CardanoNetwork) => void; onInspectDatum?: (request: { format: 'json'; value: string }) => void }) {
   const [isLoading, setIsLoading] = useState(false);
   const [txHash, setTxHash] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -72,6 +72,7 @@ export default function DeployContractView({ connected, wallet, network, onSubmi
         <FormInput label="Script Address" placeholder="addr_test1w..." value={scriptAddress} onChange={setScriptAddress} />
         <FormInput label="Amount to Lock (ADA)" placeholder="0.0" value={amount} onChange={setAmount} />
         <FormTextarea label="Datum (JSON)" value={datum} onChange={setDatum} />
+        <button onClick={() => onInspectDatum?.({ format: 'json', value: datum })} className="text-sm text-violet-300 hover:underline">Check datum in Data Lab</button>
         <button onClick={handleDeploy} disabled={isLoading || !connected} className="w-full bg-violet-600 hover:bg-violet-700 text-white font-bold py-3 px-4 rounded-lg transition-colors disabled:bg-slate-800 disabled:text-slate-500">
           {isLoading ? 'Deploying...' : 'Deploy & Lock Funds'}
         </button>

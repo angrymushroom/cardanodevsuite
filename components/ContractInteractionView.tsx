@@ -14,9 +14,10 @@ type Props = {
   wallet: any;
   address?: string;
   network: CardanoNetwork;
+  onInspectDatum?: (request: { format: 'json' | 'cbor'; value: string; expectedHash?: string }) => void;
 };
 
-export default function ContractInteractionView({ connected, wallet, address, network }: Props) {
+export default function ContractInteractionView({ connected, wallet, address, network, onInspectDatum }: Props) {
   const [scriptAddress, setScriptAddress] = useState('');
   const [scriptUtxos, setScriptUtxos] = useState<UTxO[]>([]);
   const [selected, setSelected] = useState<UTxO | null>(null);
@@ -130,6 +131,7 @@ export default function ContractInteractionView({ connected, wallet, address, ne
         <div className="space-y-4">
           <label className="block text-sm text-slate-300">Plutus version<select value={scriptVersion} onChange={e => setScriptVersion(e.target.value as 'V2' | 'V3')} className="mt-1 block w-full bg-slate-800 border border-slate-700 rounded px-3 py-2"><option value="V3">V3</option><option value="V2">V2</option></select></label>
           <FormTextarea label={selected?.output.plutusData ? 'Inline datum (decoded, read only for this spend)' : 'Original datum (JSON, required for datum hash)'} value={datum} onChange={setDatum} readOnly={!!selected?.output.plutusData} />
+          {selected && <button onClick={() => onInspectDatum?.({ format: selected.output.plutusData ? 'cbor' : 'json', value: selected.output.plutusData || datum, expectedHash: selected.output.dataHash || '' })} className="text-sm text-violet-300 hover:underline">Check datum hash in Data Lab</button>}
           <FormTextarea label="Redeemer (JSON)" value={redeemer} onChange={setRedeemer} />
           <FormTextarea label="Script CBOR Hex" value={scriptCbor} onChange={setScriptCbor} placeholder="58... (from plutus.json)" />
         </div>

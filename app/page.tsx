@@ -2,11 +2,12 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { BrowserWallet, Transaction, UTxO, resolvePaymentKeyHash } from '@meshsdk/core';
-import { Sparkles, ArrowRight, Power, ChevronsRight, FileJson, Send, Search, Clipboard, Activity } from 'lucide-react';
+import { Sparkles, ArrowRight, Power, ChevronsRight, FileJson, Send, Search, Clipboard, Activity, Braces } from 'lucide-react';
 import UTXOSelector from '../components/UTXOSelector';
 import DeployContractView from '../components/DeployContractView';
 import ContractInteractionView from '../components/ContractInteractionView';
 import TransactionWatch from '../components/TransactionWatch';
+import PlutusDataLab from '../components/PlutusDataLab';
 import { adaToLovelace, assertAddressNetwork, explorerTxUrl, formatAda, walletNetwork, type TestnetNetwork } from '../lib/cardano';
 import { createKoiosProvider } from '../lib/provider';
 import { transactionErrorHint } from '../lib/transactionDiagnostics';
@@ -53,6 +54,7 @@ export default function Home() {
 const DeveloperSuite = () => {
   const [activeView, setActiveView] = useState('simple_transfer');
   const [watchRequest, setWatchRequest] = useState<{ hash: string; network: ReturnType<typeof walletNetwork> } | null>(null);
+  const [labRequest, setLabRequest] = useState<{ format: 'json' | 'cbor'; value: string; expectedHash: string; id: number } | null>(null);
   const [wallet, setWallet] = useState<BrowserWallet | null>(null);
   const [networkId, setNetworkId] = useState<number | undefined>();
   const connected = wallet !== null;
@@ -71,6 +73,10 @@ const DeveloperSuite = () => {
   const onSubmitted = (hash: string, submittedNetwork: ReturnType<typeof walletNetwork>) => {
     setWatchRequest({ hash, network: submittedNetwork });
     setActiveView('transaction_watch');
+  };
+  const onInspectDatum = (request: { format: 'json' | 'cbor'; value: string; expectedHash?: string }) => {
+    setLabRequest({ format: request.format, value: request.value, expectedHash: request.expectedHash || '', id: Date.now() });
+    setActiveView('plutus_data_lab');
   };
 
   // State that is shared across all views
@@ -124,8 +130,9 @@ const DeveloperSuite = () => {
       />
       <MainContent
         activeView={activeView}
-        walletProps={{ connected, wallet, address, network, updateWalletState, selectedUtxos, onSubmitted }}
+        walletProps={{ connected, wallet, address, network, updateWalletState, selectedUtxos, onSubmitted, onInspectDatum }}
         watchRequest={watchRequest}
+        labRequest={labRequest}
         onWatchConfirmed={(hash, confirmedNetwork) => {
           if (watchRequest?.hash === hash && confirmedNetwork === network && wallet) void updateWalletState();
         }}
@@ -193,6 +200,7 @@ const Sidebar = ({ activeView, onNavigate, walletState, utxos, selectedUtxos, on
           <NavItem icon={<Search size={18} />} label="Deploy Contract" isActive={activeView === 'deploy_contract'} onClick={() => onNavigate('deploy_contract')} />
           <NavItem icon={<FileJson size={18} />} label="Contract Simulator" isActive={activeView === 'contract_simulator'} onClick={() => onNavigate('contract_simulator')} />
           <NavItem icon={<Activity size={18} />} label="Transaction Watch" isActive={activeView === 'transaction_watch'} onClick={() => onNavigate('transaction_watch')} />
+          <NavItem icon={<Braces size={18} />} label="Plutus Data Lab" isActive={activeView === 'plutus_data_lab'} onClick={() => onNavigate('plutus_data_lab')} />
         </nav>
       </div>
       {/* UTXO SELECTOR IS NOW HERE */}
@@ -203,13 +211,14 @@ const Sidebar = ({ activeView, onNavigate, walletState, utxos, selectedUtxos, on
   );
 };
 
-const MainContent = ({ activeView, walletProps, watchRequest, onWatchConfirmed }) => {
+const MainContent = ({ activeView, walletProps, watchRequest, labRequest, onWatchConfirmed }) => {
   return (
     <main className="flex-1">
       {activeView === 'simple_transfer' && <SimpleTransferView {...walletProps} />}
       {activeView === 'deploy_contract' && <DeployContractView {...walletProps} />}
       {activeView === 'contract_simulator' && <ContractInteractionView {...walletProps} />}
       {activeView === 'transaction_watch' && <TransactionWatch key={watchRequest ? `${watchRequest.network}:${watchRequest.hash}` : 'manual'} initialHash={watchRequest?.hash} initialNetwork={watchRequest?.network || walletProps.network} onConfirmed={onWatchConfirmed} />}
+      {activeView === 'plutus_data_lab' && <PlutusDataLab key={labRequest?.id || 'manual'} initialFormat={labRequest?.format} initialValue={labRequest?.value} initialExpectedHash={labRequest?.expectedHash} />}
     </main>
   );
 };
