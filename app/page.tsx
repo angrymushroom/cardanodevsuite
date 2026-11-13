@@ -11,6 +11,7 @@ import PlutusDataLab from '../components/PlutusDataLab';
 import { adaToLovelace, assertAddressNetwork, explorerTxUrl, formatAda, walletNetwork, type TestnetNetwork } from '../lib/cardano';
 import { createKoiosProvider } from '../lib/provider';
 import { transactionErrorHint } from '../lib/transactionDiagnostics';
+import { transferDraftKey } from '../lib/transactionPreview';
 
 // Main Page Component (Landing Page)
 export default function Home() {
@@ -57,17 +58,28 @@ const DeveloperSuite = () => {
   const [labRequest, setLabRequest] = useState<{ format: 'json' | 'cbor'; value: string; expectedHash: string; id: number } | null>(null);
   const [wallet, setWallet] = useState<BrowserWallet | null>(null);
   const [networkId, setNetworkId] = useState<number | undefined>();
+  const walletGeneration = useRef(0);
+  const refreshGeneration = useRef(0);
   const connected = wallet !== null;
   const connect = async (name: string) => {
+    const generation = ++walletGeneration.current;
+    ++refreshGeneration.current;
     try {
       const nextWallet = await BrowserWallet.enable(name);
-      setNetworkId(await nextWallet.getNetworkId());
+      const nextNetworkId = await nextWallet.getNetworkId();
+      if (generation !== walletGeneration.current) return;
+      setNetworkId(nextNetworkId);
       setWallet(nextWallet);
     } catch (e: any) {
-      setError(e.message || 'Wallet connection failed.');
+      if (generation === walletGeneration.current) setError(e.message || 'Wallet connection failed.');
     }
   };
-  const disconnect = () => { setWallet(null); setNetworkId(undefined); };
+  const disconnect = () => {
+    ++walletGeneration.current;
+    ++refreshGeneration.current;
+    setWallet(null);
+    setNetworkId(undefined);
+  };
   const [testnet, setTestnet] = useState<TestnetNetwork>('preprod');
   const network = walletNetwork(networkId, testnet);
   const onSubmitted = (hash: string, submittedNetwork: ReturnType<typeof walletNetwork>) => {
@@ -91,6 +103,8 @@ const DeveloperSuite = () => {
   const [selectedUtxos, setSelectedUtxos] = useState<UTxO[]>([]);
 
   const updateWalletState = useCallback(async () => {
+    const walletRequest = walletGeneration.current;
+    const refreshRequest = ++refreshGeneration.current;
     if (connected && wallet) {
         try {
             const currentUtxos = await wallet.getUtxos();
@@ -98,6 +112,8 @@ const DeveloperSuite = () => {
             const walletAddress = await wallet.getChangeAddress();
             // CIP-95 is optional. Its DRep key is different from the payment key hash.
             const dRep = await wallet.getDRep().catch(() => undefined);
+
+            if (walletRequest !== walletGeneration.current || refreshRequest !== refreshGeneration.current) return;
 
             setUtxos(currentUtxos || []);
             setSelectedUtxos([]);
@@ -108,7 +124,11 @@ const DeveloperSuite = () => {
             setError(null);
 
 
-        } catch (e) { console.error(e); setError("Failed to fetch wallet data."); }
+        } catch (e) {
+            if (walletRequest !== walletGeneration.current || refreshRequest !== refreshGeneration.current) return;
+            console.error(e);
+            setError("Failed to fetch wallet data.");
+        }
     } else {
         setAddress(undefined); setAdaBalance('0'); setUtxos([]); setSelectedUtxos([]); setPkh(null); setPk(null); setError(null);
     }
@@ -235,10 +255,16 @@ const SimpleTransferView = ({ connected, wallet, address, network, selectedUtxos
   const [metadata, setMetadata]     = useState('{}');
   const [unsignedTx, setUnsignedTx] = useState<string | null>(null);
   const [summary, setSummary]       = useState<any>(null);
+  const [previewDraft, setPreviewDraft] = useState<string | null>(null);
+  const [previewWallet, setPreviewWallet] = useState<BrowserWallet | null>(null);
+  const draft = transferDraftKey({ recipient, amount, metadata, network, address, selectedUtxos });
+  const previewValid = Boolean(unsignedTx && previewDraft === draft && previewWallet === wallet);
 
   useEffect(() => {
     setUnsignedTx(null);
     setSummary(null);
+    setPreviewDraft(null);
+    setPreviewWallet(null);
   }, [recipient, amount, metadata, selectedUtxos, network, address]);
 
   async function buildPreview() {
@@ -247,6 +273,8 @@ const SimpleTransferView = ({ connected, wallet, address, network, selectedUtxos
     setError(null);
     setSummary(null);
     setUnsignedTx(null);
+    setPreviewDraft(null);
+    setPreviewWallet(null);
     try {
       assertAddressNetwork(recipient, network);
       const provider = createKoiosProvider(network);
@@ -267,6 +295,8 @@ const SimpleTransferView = ({ connected, wallet, address, network, selectedUtxos
       if (!builtTxCbor) throw new Error("Failed to build transaction.");
 
       setUnsignedTx(builtTxCbor);
+      setPreviewDraft(draft);
+      setPreviewWallet(wallet);
 
       const txBody = tx.txBuilder.meshTxBuilderBody;
       const change = txBody.outputs.find((o: any) => o.address === address);
@@ -284,7 +314,7 @@ const SimpleTransferView = ({ connected, wallet, address, network, selectedUtxos
   }
 
   async function signAndSubmit() {
-    if (!wallet || !unsignedTx) return;
+    if (!wallet || !unsignedTx || !previewValid) return;
     setLoading(true);
     setError(null);
     setTxHash(null);
@@ -318,11 +348,11 @@ const SimpleTransferView = ({ connected, wallet, address, network, selectedUtxos
             <div className="bg-slate-900 border border-slate-700 rounded-2xl p-6">
                 <h2 className="text-xl font-bold mb-4">Pre-flight Summary</h2>
                 <div className="space-y-3 text-sm">
-                  <SummaryRow label="Calculated Fee:" value={summary?.fee ? `${formatAda(summary.fee)} ADA` : '-'} />
-                  <SummaryRow label="Change Output:" value={summary ? `${formatAda(summary.change)} ADA` : '-'} />
+                  <SummaryRow label="Calculated Fee:" value={previewValid && summary?.fee ? `${formatAda(summary.fee)} ADA` : '-'} />
+                  <SummaryRow label="Change Output:" value={previewValid && summary ? `${formatAda(summary.change)} ADA` : '-'} />
                   <div className="pt-2">
                       <label className="block text-sm font-medium text-slate-300">Transaction CBOR</label>
-                      <textarea readOnly value={summary ? summary.cbor : ''} className="mt-1 w-full h-24 bg-slate-950 text-xs p-2 rounded-md font-mono break-all resize-none border border-slate-700"></textarea>
+                      <textarea readOnly value={previewValid && summary ? summary.cbor : ''} className="mt-1 w-full h-24 bg-slate-950 text-xs p-2 rounded-md font-mono break-all resize-none border border-slate-700"></textarea>
                   </div>
                 </div>
             </div>
@@ -330,7 +360,7 @@ const SimpleTransferView = ({ connected, wallet, address, network, selectedUtxos
                 <button onClick={buildPreview} disabled={loading || !connected} className="w-full bg-slate-700 hover:bg-slate-600 text-white font-bold py-3 px-4 rounded-lg transition-colors disabled:bg-slate-800 disabled:text-slate-500">
                   {loading && !unsignedTx ? 'Building...' : 'Build & Preview'}
                 </button>
-                <button onClick={signAndSubmit} disabled={!unsignedTx || loading} className="w-full bg-violet-600 hover:bg-violet-700 text-white font-bold py-3 px-4 rounded-lg transition-colors disabled:bg-slate-800 disabled:text-slate-500">
+                <button onClick={signAndSubmit} disabled={!previewValid || loading} className="w-full bg-violet-600 hover:bg-violet-700 text-white font-bold py-3 px-4 rounded-lg transition-colors disabled:bg-slate-800 disabled:text-slate-500">
                   {loading && unsignedTx ? 'Submitting...' : 'Sign & Submit'}
                 </button>
                 {error && <div className="text-red-400 text-sm p-3 bg-red-900/50 rounded-md"><p>{error}</p>{transactionErrorHint(error) && <p className="mt-2 text-amber-200">{transactionErrorHint(error)}</p>}</div>}

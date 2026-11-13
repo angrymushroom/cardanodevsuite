@@ -85,12 +85,12 @@ export default function TransactionWatch({ initialHash = '', initialNetwork, onC
     </label>
     <div className="flex gap-3">
       <button onClick={() => { setInfo(null); setWatching(true); }} disabled={!isTransactionHash(hash) || watching} className="bg-violet-600 hover:bg-violet-700 px-4 py-2 rounded-lg font-semibold disabled:opacity-50">Check &amp; Watch</button>
-      {watching && <button onClick={() => setWatching(false)} className="bg-slate-700 hover:bg-slate-600 px-4 py-2 rounded-lg">Stop</button>}
+      {watching && <button onClick={() => { setWatching(false); if (status === 'checking') setStatus('idle'); }} className="bg-slate-700 hover:bg-slate-600 px-4 py-2 rounded-lg">Stop</button>}
     </div>
     {hash && !isTransactionHash(hash) && <p className="text-amber-400 text-sm">Enter a 64-character hexadecimal transaction hash.</p>}
     {status === 'checking' && <p className="text-slate-300 text-sm">Checking {network}...</p>}
-    {status === 'not_found' && <p className="text-amber-300 text-sm">Not indexed yet. This can mean propagation delay, an incorrect hash, or the wrong network. Checking again in 5 seconds.</p>}
-    {status === 'provider_error' && <p className="text-amber-300 text-sm">Provider request failed; retrying in 5 seconds. {error}</p>}
+    {status === 'not_found' && <p className="text-amber-300 text-sm">Not indexed yet. This can mean propagation delay, an incorrect hash, or the wrong network. {watching ? 'Checking again in 5 seconds.' : 'Watch stopped.'}</p>}
+    {status === 'provider_error' && <p className="text-amber-300 text-sm">Provider request failed. {watching ? 'Retrying in 5 seconds.' : 'Watch stopped.'} {error}</p>}
     {status === 'timed_out' && <p className="text-amber-300 text-sm">No confirmation found after 10 minutes. Check the hash and network, then start watching again if needed.</p>}
     {status === 'confirmed' && info && <div className="bg-green-900/30 border border-green-700 rounded-lg p-4 text-sm space-y-2">
       <p className="font-bold text-green-400">Confirmed on-chain</p>

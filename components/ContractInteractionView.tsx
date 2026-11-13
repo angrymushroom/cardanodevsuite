@@ -1,13 +1,13 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { MeshTxBuilder, resolvePaymentKeyHash, type UTxO } from '@meshsdk/core';
 import { PlutusData, PlutusDatumSchema } from '@emurgo/cardano-serialization-lib-asmjs';
 import { FormInput, FormTextarea } from './Form';
 import SimulationResult from './SimulationResult';
 import UTxODetailModal from './UTxODetailModal';
 import { assertAddressNetwork, formatAda, type CardanoNetwork } from '../lib/cardano';
-import { createKoiosProvider } from '../lib/provider';
+import { createKoiosProvider, fetchAddressUTxOsStrict } from '../lib/provider';
 
 type Props = {
   connected: boolean;
@@ -30,8 +30,11 @@ export default function ContractInteractionView({ connected, wallet, address, ne
   const [simulating, setSimulating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [simulationResult, setSimulationResult] = useState<any>(null);
+  const fetchGeneration = useRef(0);
 
   useEffect(() => {
+    fetchGeneration.current += 1;
+    setLoading(false);
     setScriptUtxos([]);
     setSelected(null);
     setSimulationResult(null);
@@ -51,16 +54,18 @@ export default function ContractInteractionView({ connected, wallet, address, ne
   }, [selected]);
 
   async function fetchScriptUtxos() {
+    const generation = ++fetchGeneration.current;
     setLoading(true);
     setError(null);
     try {
       assertAddressNetwork(scriptAddress, network);
       const provider = createKoiosProvider(network);
-      setScriptUtxos(await provider.fetchAddressUTxOs(scriptAddress));
+      const utxos = await fetchAddressUTxOsStrict(provider, scriptAddress);
+      if (generation === fetchGeneration.current) setScriptUtxos(utxos);
     } catch (e: any) {
-      setError(e.message || 'Failed to fetch script UTxOs.');
+      if (generation === fetchGeneration.current) setError(e.message || 'Failed to fetch script UTxOs.');
     } finally {
-      setLoading(false);
+      if (generation === fetchGeneration.current) setLoading(false);
     }
   }
 
@@ -114,7 +119,7 @@ export default function ContractInteractionView({ connected, wallet, address, ne
         <h2 className="text-2xl font-bold mb-6">Step 1: Target Contract &amp; UTxO</h2>
         <div className="space-y-4">
           <FormInput label="Script Address" placeholder={network === 'mainnet' ? 'addr1...' : 'addr_test1...'} value={scriptAddress} onChange={setScriptAddress} />
-          <button onClick={fetchScriptUtxos} disabled={loading || !connected} className="w-full bg-slate-700 hover:bg-slate-600 text-white font-bold py-2 px-4 rounded-lg disabled:opacity-50">{loading ? 'Fetching...' : 'Fetch Locked UTxOs'}</button>
+          <button onClick={fetchScriptUtxos} disabled={loading} className="w-full bg-slate-700 hover:bg-slate-600 text-white font-bold py-2 px-4 rounded-lg disabled:opacity-50">{loading ? 'Fetching...' : 'Fetch Locked UTxOs'}</button>
           <h3 className="text-lg font-semibold text-slate-300">Locked UTxOs</h3>
           <div className="space-y-2 max-h-60 overflow-y-auto">
             {scriptUtxos.map(utxo => <div key={`${utxo.input.txHash}-${utxo.input.outputIndex}`} onClick={() => setSelected(utxo)} className={`p-3 rounded-lg border text-sm cursor-pointer ${selected?.input.txHash === utxo.input.txHash && selected?.input.outputIndex === utxo.input.outputIndex ? 'bg-violet-900/50 border-violet-500' : 'bg-slate-800 border-slate-700 hover:border-violet-600'}`}>
